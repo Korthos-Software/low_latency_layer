@@ -36,6 +36,6 @@ add_custom_command(TARGET ${LIBRARY_NAME} POST_BUILD
 
 add_custom_command(TARGET ${LIBRARY_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/low_latency_layer.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/low_latency_layer.json"
 	"${OUTPUT_DIR}/"
 )

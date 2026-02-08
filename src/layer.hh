@@ -4,6 +4,8 @@
 #include <vulkan/vk_platform.h>
 #include <vulkan/vulkan.hpp>
 
+// The purpose of this file is to expose a header entry point for our layer.
+
 extern "C" {
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
