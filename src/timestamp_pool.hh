@@ -43,25 +43,25 @@
 
 namespace low_latency {
 
+class QueueContext;
+
 class TimestampPool final {
   private:
     static constexpr auto TIMESTAMP_QUERY_POOL_SIZE = 512u;
     static_assert(TIMESTAMP_QUERY_POOL_SIZE % 2 == 0);
 
   private:
-    VkuDeviceDispatchTable vtable;
-    VkDevice device;
-    VkCommandPool command_pool;
+    QueueContext& queue_context;
 
     // VkQueryPool with an unordered set of keys available for reading.
     using available_query_indicies_t = std::unordered_set<std::uint64_t>;
 
-    struct block {
+    struct Block {
         VkQueryPool query_pool;
-        std::shared_ptr<available_query_indicies_t> available_indicies;
+        std::unique_ptr<available_query_indicies_t> available_indicies;
         std::unique_ptr<std::vector<VkCommandBuffer>> command_buffers;
     };
-    std::vector<block> blocks; // multiple blocks
+    std::vector<Block> blocks; // multiple blocks
 
     // A snapshot of all available blocks for reading after each poll.
     std::vector<std::unique_ptr<std::vector<std::uint64_t>>> cached_timestamps;
@@ -74,7 +74,7 @@ class TimestampPool final {
         friend class TimestampPool;
 
       private:
-        std::weak_ptr<available_query_indicies_t> index_origin;
+        available_query_indicies_t& index_origin;
         std::size_t block_index;
 
       public:
@@ -83,8 +83,7 @@ class TimestampPool final {
         std::array<VkCommandBuffer, 2> command_buffers;
 
       public:
-        Handle(const std::weak_ptr<TimestampPool::available_query_indicies_t>&
-                   index_origin,
+        Handle(TimestampPool::available_query_indicies_t& index_origin,
                const std::size_t block_index, const VkQueryPool& query_pool,
                const std::uint64_t query_index,
                const std::array<VkCommandBuffer, 2>& command_buffers);
@@ -99,15 +98,15 @@ class TimestampPool final {
     };
 
   private:
-    block allocate();
+    Block allocate();
 
   public:
-    TimestampPool(const VkDevice& device, const VkuDeviceDispatchTable& vtable,
-                  const VkCommandPool& command_pool);
+    TimestampPool(QueueContext& queue_context);
     TimestampPool(const TimestampPool&) = delete;
     TimestampPool(TimestampPool&&) = delete;
     TimestampPool operator==(const TimestampPool&) = delete;
     TimestampPool operator==(TimestampPool&&) = delete;
+    ~TimestampPool();
 
   public:
     // Hands out a Handle with a pool and index of two uint64_t's.

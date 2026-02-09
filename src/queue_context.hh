@@ -6,32 +6,27 @@
 #include <vulkan/utility/vk_dispatch_table.h>
 #include <vulkan/vulkan.hpp>
 
-#include <deque>
-#include <vector>
+#include <memory>
 
 namespace low_latency {
+  
+class DeviceContext;
 
 class QueueContext final {
   public:
-    VkDevice device;
-    VkuDeviceDispatchTable vtable;
+    DeviceContext& device_context;
 
-    VkQueue queue;
-    std::uint32_t queue_family_index;
+    const VkQueue queue;
+    const std::uint32_t queue_family_index;
 
     VkSemaphore semaphore;
     VkCommandPool command_pool;
 
-    TimestampPool timestamp_pool;
-
-    std::deque<
-        std::vector<std::pair<TimestampPool::Handle, TimestampPool::Handle>>>
-        tracked_queues;
+    std::unique_ptr<TimestampPool> timestamp_pool;
 
   public:
-    QueueContext(const VkDevice& device, const VkQueue queue,
-               const std::uint32_t& queue_family_index,
-               const VkuDeviceDispatchTable& vtable);
+    QueueContext(DeviceContext& device_context, const VkQueue& queue,
+                 const std::uint32_t& queue_family_index);
     QueueContext(const QueueContext&) = delete;
     QueueContext(QueueContext&&) = delete;
     QueueContext operator==(const QueueContext&) = delete;

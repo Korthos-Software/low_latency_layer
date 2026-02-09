@@ -1,6 +1,10 @@
 #include "layer.hh"
 
+#include <iostream>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
+
 #include <vulkan/utility/vk_dispatch_table.h>
 #include <vulkan/vk_layer.h>
 #include <vulkan/vk_platform.h>
@@ -8,37 +12,18 @@
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_core.h>
 
-#include <deque>
-#include <iostream>
-#include <mutex>
-#include <string_view>
-#include <unordered_map>
-#include <unordered_set>
-
+#include "device_context.hh"
+#include "instance_context.hh"
+#include "layer_context.hh"
 #include "queue_context.hh"
-#include "timestamp_pool.hh"
 
 namespace low_latency {
 
-// Global mutex for layer data.
-static auto mutex = std::mutex{};
+namespace {
 
-// Mappings for device instances.
-static std::unordered_map<VkPhysicalDevice, VkInstance> device_instances;
-static std::unordered_map<void*, VkuInstanceDispatchTable> instance_vtables;
-static std::unordered_map<void*, VkuDeviceDispatchTable> device_vtables;
+LayerContext layer_context;
 
-static std::uint64_t current_frame = 0;
-static std::unordered_map<VkQueue, QueueContext> queue_contexts;
-
-template <typename T>
-concept DispatchableType =
-    std::same_as<std::remove_cvref_t<T>, VkInstance> ||
-    std::same_as<std::remove_cvref_t<T>, VkDevice> ||
-    std::same_as<std::remove_cvref_t<T>, VkPhysicalDevice>;
-template <DispatchableType T> void* get_key(const T& inst) {
-    return *reinterpret_cast<void**>(inst);
-}
+} // namespace
 
 template <typename T, typename sType>
 static T* get_link_info(const void* const head, const sType& stype) {
@@ -92,23 +77,24 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
         return result;
     }
 
-    const auto lock = std::scoped_lock{mutex};
-    instance_vtables.emplace(
-        get_key(*pInstance),
-        VkuInstanceDispatchTable{
-            .DestroyInstance = reinterpret_cast<PFN_vkDestroyInstance>(
-                gipa(*pInstance, "vkDestroyInstance")),
-            .EnumeratePhysicalDevices =
-                reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(
-                    gipa(*pInstance, "vkEnumeratePhysicalDevices")),
-            .GetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
-                gipa(*pInstance, "vkGetInstanceProcAddr")),
-            .EnumerateDeviceExtensionProperties =
-                reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
-                    gipa(*pInstance, "vkEnumerateDeviceExtensionProperties")),
-        }
+    const auto key = layer_context.get_key(*pInstance);
+    auto vtable = VkuInstanceDispatchTable{
+        .DestroyInstance = reinterpret_cast<PFN_vkDestroyInstance>(
+            gipa(*pInstance, "vkDestroyInstance")),
+        .EnumeratePhysicalDevices =
+            reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(
+                gipa(*pInstance, "vkEnumeratePhysicalDevices")),
+        .GetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
+            gipa(*pInstance, "vkGetInstanceProcAddr")),
+        .EnumerateDeviceExtensionProperties =
+            reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
+                gipa(*pInstance, "vkEnumerateDeviceExtensionProperties")),
+    };
 
-    );
+    const auto lock = std::scoped_lock{layer_context.mutex};
+    assert(!layer_context.contexts.contains(key));
+    layer_context.contexts.try_emplace(
+        key, std::make_unique<InstanceContext>(*pInstance, std::move(vtable)));
 
     return VK_SUCCESS;
 }
@@ -116,34 +102,11 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
 static VKAPI_ATTR void VKAPI_CALL
 DestroyInstance(VkInstance instance, const VkAllocationCallbacks* allocator) {
 
-    const auto lock = std::scoped_lock{mutex};
+    const auto lock = std::scoped_lock{layer_context.mutex};
 
-    const auto key = get_key(instance);
-    assert(instance_vtables.contains(key));
-    instance_vtables.erase(key);
-}
-
-static VKAPI_ATTR VkResult VKAPI_CALL EnumeratePhysicalDevices(
-    VkInstance instance, std::uint32_t* count, VkPhysicalDevice* devices) {
-
-    const auto lock = std::scoped_lock{mutex};
-
-    const auto it = instance_vtables.find(get_key(instance));
-    assert(it != std::end(instance_vtables));
-    const auto& vtable = it->second;
-
-    if (const auto result =
-            vtable.EnumeratePhysicalDevices(instance, count, devices);
-        !devices || result != VK_SUCCESS) {
-
-        return result;
-    }
-
-    for (auto i = std::uint32_t{0}; i < *count; ++i) {
-        device_instances.emplace(devices[i], instance);
-    }
-
-    return VK_SUCCESS;
+    const auto key = layer_context.get_key(instance);
+    assert(layer_context.contexts.contains(key));
+    layer_context.contexts.erase(key);
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
@@ -163,16 +126,17 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     }
     create_info->u.pLayerInfo = create_info->u.pLayerInfo->pNext;
 
-    const auto lock = std::scoped_lock{mutex};
+    const auto lock = std::scoped_lock{layer_context.mutex};
+
+    auto& context = layer_context.get_context<InstanceContext>(physical_device);
 
     const auto next_extensions =
         [&]() -> std::optional<std::vector<const char*>> {
         const auto supported_extensions =
             [&]() -> std::optional<std::vector<VkExtensionProperties>> {
             const auto enumerate_device_extensions =
-                reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
-                    gipa(device_instances[physical_device],
-                         "vkEnumerateDeviceExtensionProperties"));
+                reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(gipa(
+                    context.instance, "vkEnumerateDeviceExtensionProperties"));
             if (!enumerate_device_extensions) {
                 return std::nullopt;
             }
@@ -257,67 +221,75 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         return result;
     }
 
-    device_vtables.emplace(
-        get_key(*pDevice),
-        VkuDeviceDispatchTable{
-            .GetDeviceProcAddr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(
-                gdpa(*pDevice, "vkGetDeviceProcAddr")),
-            .DestroyDevice = reinterpret_cast<PFN_vkDestroyDevice>(
-                gdpa(*pDevice, "vkDestroyDevice")),
-            .GetDeviceQueue = reinterpret_cast<PFN_vkGetDeviceQueue>(
-                gdpa(*pDevice, "vkGetDeviceQueue")),
-            .QueueSubmit = reinterpret_cast<PFN_vkQueueSubmit>(
-                gdpa(*pDevice, "vkQueueSubmit")),
-            .CreateSemaphore = reinterpret_cast<PFN_vkCreateSemaphore>(
-                gdpa(*pDevice, "vkCreateSemaphore")),
-            .CreateQueryPool = reinterpret_cast<PFN_vkCreateQueryPool>(
-                gdpa(*pDevice, "vkCreateQueryPool")),
-            .GetQueryPoolResults = reinterpret_cast<PFN_vkGetQueryPoolResults>(
-                gdpa(*pDevice, "vkGetQueryPoolResults")),
-            .CreateCommandPool = reinterpret_cast<PFN_vkCreateCommandPool>(
-                gdpa(*pDevice, "vkCreateCommandPool")),
-            .AllocateCommandBuffers =
-                reinterpret_cast<PFN_vkAllocateCommandBuffers>(
-                    gdpa(*pDevice, "vkAllocateCommandBuffers")),
-            .BeginCommandBuffer = reinterpret_cast<PFN_vkBeginCommandBuffer>(
-                gdpa(*pDevice, "vkBeginCommandBuffer")),
-            .EndCommandBuffer = reinterpret_cast<PFN_vkEndCommandBuffer>(
-                gdpa(*pDevice, "vkEndCommandBuffer")),
-            .ResetCommandBuffer = reinterpret_cast<PFN_vkResetCommandBuffer>(
-                gdpa(*pDevice, "vkResetCommandBuffer")),
-            .CmdDraw =
-                reinterpret_cast<PFN_vkCmdDraw>(gdpa(*pDevice, "vkCmdDraw")),
-            .CmdDrawIndexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(
-                gdpa(*pDevice, "vkCmdDrawIndexed")),
-            .CmdResetQueryPool = reinterpret_cast<PFN_vkCmdResetQueryPool>(
-                gdpa(*pDevice, "vkCmdResetQueryPool")),
-            .GetDeviceQueue2 = reinterpret_cast<PFN_vkGetDeviceQueue2>(
-                gdpa(*pDevice, "vkGetDeviceQueue2")),
-            .QueueSubmit2 = reinterpret_cast<PFN_vkQueueSubmit2>(
-                gdpa(*pDevice, "vkQueueSubmit2")),
-            .QueuePresentKHR = reinterpret_cast<PFN_vkQueuePresentKHR>(
-                gdpa(*pDevice, "vkQueuePresentKHR")),
-            .GetSemaphoreCounterValueKHR =
-                reinterpret_cast<PFN_vkGetSemaphoreCounterValueKHR>(
-                    gdpa(*pDevice, "vkGetSemaphoreCounterValueKHR")),
-            .CmdWriteTimestamp2KHR =
-                reinterpret_cast<PFN_vkCmdWriteTimestamp2KHR>(
-                    gdpa(*pDevice, "vkCmdWriteTimestamp2KHR")),
-            .QueueSubmit2KHR = reinterpret_cast<PFN_vkQueueSubmit2KHR>(
-                gdpa(*pDevice, "vkQueueSubmit2KHR")),
+    auto vtable = VkuDeviceDispatchTable{
+        .GetDeviceProcAddr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(
+            gdpa(*pDevice, "vkGetDeviceProcAddr")),
+        .DestroyDevice = reinterpret_cast<PFN_vkDestroyDevice>(
+            gdpa(*pDevice, "vkDestroyDevice")),
+        .GetDeviceQueue = reinterpret_cast<PFN_vkGetDeviceQueue>(
+            gdpa(*pDevice, "vkGetDeviceQueue")),
+        .QueueSubmit = reinterpret_cast<PFN_vkQueueSubmit>(
+            gdpa(*pDevice, "vkQueueSubmit")),
+        .CreateSemaphore = reinterpret_cast<PFN_vkCreateSemaphore>(
+            gdpa(*pDevice, "vkCreateSemaphore")),
+        .DestroySemaphore = reinterpret_cast<PFN_vkDestroySemaphore>(
+            gdpa(*pDevice, "vkDestroySemaphore")),
+        .CreateQueryPool = reinterpret_cast<PFN_vkCreateQueryPool>(
+            gdpa(*pDevice, "vkCreateQueryPool")),
+        .DestroyQueryPool = reinterpret_cast<PFN_vkDestroyQueryPool>(
+            gdpa(*pDevice, "vkDestroyQueryPool")),
+        .GetQueryPoolResults = reinterpret_cast<PFN_vkGetQueryPoolResults>(
+            gdpa(*pDevice, "vkGetQueryPoolResults")),
+        .CreateCommandPool = reinterpret_cast<PFN_vkCreateCommandPool>(
+            gdpa(*pDevice, "vkCreateCommandPool")),
+        .DestroyCommandPool = reinterpret_cast<PFN_vkDestroyCommandPool>(
+            gdpa(*pDevice, "vkDestroyCommandPool")),
+        .AllocateCommandBuffers =
+            reinterpret_cast<PFN_vkAllocateCommandBuffers>(
+                gdpa(*pDevice, "vkAllocateCommandBuffers")),
+        .FreeCommandBuffers = reinterpret_cast<PFN_vkFreeCommandBuffers>(
+            gdpa(*pDevice, "vkFreeCommandBuffers")),
+        .BeginCommandBuffer = reinterpret_cast<PFN_vkBeginCommandBuffer>(
+            gdpa(*pDevice, "vkBeginCommandBuffer")),
+        .EndCommandBuffer = reinterpret_cast<PFN_vkEndCommandBuffer>(
+            gdpa(*pDevice, "vkEndCommandBuffer")),
+        .ResetCommandBuffer = reinterpret_cast<PFN_vkResetCommandBuffer>(
+            gdpa(*pDevice, "vkResetCommandBuffer")),
+        .CmdDraw = reinterpret_cast<PFN_vkCmdDraw>(gdpa(*pDevice, "vkCmdDraw")),
+        .CmdDrawIndexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(
+            gdpa(*pDevice, "vkCmdDrawIndexed")),
+        .CmdResetQueryPool = reinterpret_cast<PFN_vkCmdResetQueryPool>(
+            gdpa(*pDevice, "vkCmdResetQueryPool")),
+        .GetDeviceQueue2 = reinterpret_cast<PFN_vkGetDeviceQueue2>(
+            gdpa(*pDevice, "vkGetDeviceQueue2")),
+        .QueueSubmit2 = reinterpret_cast<PFN_vkQueueSubmit2>(
+            gdpa(*pDevice, "vkQueueSubmit2")),
+        .QueuePresentKHR = reinterpret_cast<PFN_vkQueuePresentKHR>(
+            gdpa(*pDevice, "vkQueuePresentKHR")),
+        .GetSemaphoreCounterValueKHR =
+            reinterpret_cast<PFN_vkGetSemaphoreCounterValueKHR>(
+                gdpa(*pDevice, "vkGetSemaphoreCounterValueKHR")),
+        .CmdWriteTimestamp2KHR = reinterpret_cast<PFN_vkCmdWriteTimestamp2KHR>(
+            gdpa(*pDevice, "vkCmdWriteTimestamp2KHR")),
+        .QueueSubmit2KHR = reinterpret_cast<PFN_vkQueueSubmit2KHR>(
+            gdpa(*pDevice, "vkQueueSubmit2KHR")),
+    };
 
-        });
+    const auto key = layer_context.get_key(*pDevice);
+    assert(!layer_context.contexts.contains(key));
+    layer_context.contexts.try_emplace(
+        key,
+        std::make_unique<DeviceContext>(context, *pDevice, std::move(vtable)));
 
     return VK_SUCCESS;
 }
 
 static VKAPI_ATTR void VKAPI_CALL
 DestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator) {
-
-    const auto lock = std::scoped_lock{mutex};
-    const auto key = get_key(device);
-    assert(device_vtables.contains(key));
-    device_vtables.erase(key);
+    const auto lock = std::scoped_lock{layer_context.mutex};
+    const auto key = layer_context.get_key(device);
+    assert(layer_context.contexts.contains(key));
+    layer_context.contexts.erase(key);
 }
 
 // Small amount of duplication, we can't assume gdq2 is available apparently.
@@ -325,37 +297,40 @@ static VKAPI_ATTR void VKAPI_CALL
 GetDeviceQueue(VkDevice device, std::uint32_t queue_family_index,
                std::uint32_t queue_index, VkQueue* queue) {
 
-    const auto lock = std::scoped_lock{mutex};
-    const auto& vtable = device_vtables[get_key(device)];
+    const auto lock = std::scoped_lock{layer_context.mutex};
 
-    vtable.GetDeviceQueue(device, queue_family_index, queue_index, queue);
+    auto& device_context = layer_context.get_context<DeviceContext>(device);
+
+    device_context.vtable.GetDeviceQueue(device, queue_family_index,
+                                         queue_index, queue);
     if (!queue || !*queue) {
         return;
     }
 
+    auto& queue_contexts = device_context.queue_contexts;
     if (!queue_contexts.contains(*queue)) {
-        queue_contexts.emplace(
-            std::piecewise_construct, std::forward_as_tuple(*queue),
-            std::forward_as_tuple(device, *queue, queue_family_index, vtable));
+        queue_contexts.try_emplace(
+            *queue, std::make_unique<QueueContext>(device_context, *queue,
+                                                   queue_family_index));
     }
 }
 
 static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(
     VkDevice device, const VkDeviceQueueInfo2* info, VkQueue* queue) {
 
-    const auto lock = std::scoped_lock{mutex};
-    const auto& vtable = device_vtables[get_key(device)];
+    const auto lock = std::scoped_lock{layer_context.mutex};
+    auto& device_context = layer_context.get_context<DeviceContext>(device);
 
-    vtable.GetDeviceQueue2(device, info, queue);
+    device_context.vtable.GetDeviceQueue2(device, info, queue);
     if (!queue || !*queue) {
         return;
     }
 
+    auto& queue_contexts = device_context.queue_contexts;
     if (!queue_contexts.contains(*queue)) {
-        queue_contexts.emplace(
-            std::piecewise_construct, std::forward_as_tuple(*queue),
-            std::forward_as_tuple(device, *queue, info->queueFamilyIndex,
-                                  vtable));
+        queue_contexts.try_emplace(
+            *queue, std::make_unique<QueueContext>(device_context, *queue,
+                                                   info->queueFamilyIndex));
     }
 }
 
@@ -363,14 +338,10 @@ static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
               const VkSubmitInfo* submit_info, VkFence fence) {
 
-    const auto lock = std::scoped_lock{mutex};
+    const auto lock = std::scoped_lock{layer_context.mutex};
 
-    auto& queue_context = [&]() -> auto& {
-        const auto& queue_context_it = queue_contexts.find(queue);
-        assert(queue_context_it != std::end(queue_contexts));
-        return queue_context_it->second;
-    }();
-    const auto& vtable = device_vtables[get_key(queue_context.device)];
+    auto& queue_context = layer_context.get_context<QueueContext>(queue);
+    const auto& vtable = queue_context.device_context.vtable;
 
     if (!submit_count) { // no-op submit we shouldn't worry about
         return vtable.QueueSubmit(queue, submit_count, submit_info, fence);
@@ -380,7 +351,7 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     auto next_submit_infos = std::vector<VkSubmitInfo>{};
     next_submit_infos.reserve(submit_count + 2);
 
-    auto timestamp_handle = queue_context.timestamp_pool.acquire();
+    auto timestamp_handle = queue_context.timestamp_pool->acquire();
     timestamp_handle->setup_command_buffers(vtable);
 
     const auto& [head_cb, tail_cb] = timestamp_handle->command_buffers;
@@ -403,7 +374,7 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     next_submit_infos[1].pWaitSemaphores = nullptr;
     next_submit_infos[1].waitSemaphoreCount = 0u;
 
-    const auto TODO_next = std::uint64_t{current_frame + 1};
+    const auto TODO_next = std::uint64_t{layer_context.current_frame + 1};
     const auto tail_tssi = VkTimelineSemaphoreSubmitInfo{
         .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,
         .signalSemaphoreValueCount = 1,
@@ -434,13 +405,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
                const VkSubmitInfo2* submit_infos, VkFence fence) {
 
-    const auto lock = std::scoped_lock{mutex};
-    auto& queue_context = [&]() -> auto& {
-        const auto& queue_context_it = queue_contexts.find(queue);
-        assert(queue_context_it != std::end(queue_contexts));
-        return queue_context_it->second;
-    }();
-    const auto& vtable = device_vtables[get_key(queue_context.device)];
+    const auto lock = std::scoped_lock{layer_context.mutex};
+    auto& queue_context = layer_context.get_context<QueueContext>(queue);
+    const auto& vtable = queue_context.device_context.vtable;
 
     if (!submit_count) { // another no-op submit
         return vtable.QueueSubmit2(queue, submit_count, submit_infos, fence);
@@ -449,7 +416,7 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     auto next_submit_infos = std::vector<VkSubmitInfo2>();
     next_submit_infos.reserve(submit_count + 2);
 
-    auto timestamp_handle = queue_context.timestamp_pool.acquire();
+    auto timestamp_handle = queue_context.timestamp_pool->acquire();
     timestamp_handle->setup_command_buffers(vtable);
     const auto& [head_cb, tail_cb] = timestamp_handle->command_buffers;
 
@@ -500,13 +467,9 @@ vkQueueSubmit2KHR(VkQueue queue, std::uint32_t submit_count,
 static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
 
-    const auto lock = std::scoped_lock{mutex};
-    auto& queue_context = [&]() -> auto& {
-        const auto& queue_context_it = queue_contexts.find(queue);
-        assert(queue_context_it != std::end(queue_contexts));
-        return queue_context_it->second;
-    }();
-    const auto& vtable = device_vtables[get_key(queue_context.device)];
+    const auto lock = std::scoped_lock{layer_context.mutex};
+    auto& queue_context = layer_context.get_context<QueueContext>(queue);
+    const auto& vtable = queue_context.device_context.vtable;
 
     if (const auto res = vtable.QueuePresentKHR(queue, present_info);
         res != VK_SUCCESS) {
@@ -517,23 +480,24 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
     std::cout << "queuePresentKHR called for queue " << queue << '\n';
 
     // Update all of our information about this queue's timestamp pool!
-    queue_context.timestamp_pool.poll();
+    queue_context.timestamp_pool->poll();
 
     // While we might be submitting on this queue, let's see what our timeline
     // semaphore says we're at.
     uint64_t value = 0;
     if (const auto res = vtable.GetSemaphoreCounterValueKHR(
-            queue_context.device, queue_context.semaphore, &value);
+            queue_context.device_context.device, queue_context.semaphore,
+            &value);
         res != VK_SUCCESS) {
 
         return res;
     }
 
-    std::cout << "    frame_index: " << current_frame << '\n';
+    std::cout << "    frame_index: " << layer_context.current_frame << '\n';
     std::cout << "    semaphore: " << value << '\n';
     std::cout << "    queue: " << queue << '\n';
 
-    ++current_frame;
+    ++layer_context.current_frame;
     return VK_SUCCESS;
 }
 
@@ -548,10 +512,6 @@ static const auto instance_functions =
          reinterpret_cast<PFN_vkVoidFunction>(low_latency::CreateInstance)},
         {"vkDestroyInstance",
          reinterpret_cast<PFN_vkVoidFunction>(low_latency::DestroyInstance)},
-
-        {"vkEnumeratePhysicalDevices",
-         reinterpret_cast<PFN_vkVoidFunction>(
-             low_latency::EnumeratePhysicalDevices)},
     };
 
 static const auto device_functions =
@@ -587,9 +547,11 @@ LowLatency_GetDeviceProcAddr(VkDevice device, const char* const pName) {
         return it->second;
     }
 
-    const auto lock = std::scoped_lock{low_latency::mutex};
-    return low_latency::device_vtables[low_latency::get_key(device)]
-        .GetDeviceProcAddr(device, pName);
+    const auto lock = std::scoped_lock{low_latency::layer_context.mutex};
+
+    using namespace low_latency;
+    const auto& context = layer_context.get_context<DeviceContext>(device);
+    return context.vtable.GetDeviceProcAddr(device, pName);
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
@@ -602,7 +564,9 @@ LowLatency_GetInstanceProcAddr(VkInstance instance, const char* const pName) {
         }
     }
 
-    const auto lock = std::scoped_lock{low_latency::mutex};
-    return low_latency::instance_vtables[low_latency::get_key(instance)]
-        .GetInstanceProcAddr(instance, pName);
+    const auto lock = std::scoped_lock{low_latency::layer_context.mutex};
+
+    using namespace low_latency;
+    const auto& context = layer_context.get_context<InstanceContext>(instance);
+    return context.vtable.GetInstanceProcAddr(instance, pName);
 }

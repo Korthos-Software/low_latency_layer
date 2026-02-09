@@ -1,11 +1,15 @@
 #include "timestamp_pool.hh"
+#include "device_context.hh"
+#include "queue_context.hh"
 
 #include <ranges>
 #include <vulkan/vulkan_core.h>
 
 namespace low_latency {
 
-TimestampPool::block TimestampPool::allocate() {
+TimestampPool::Block TimestampPool::allocate() {
+    const auto& device_context = this->queue_context.device_context;
+
     const auto query_pool = [&]() -> VkQueryPool {
         const auto qpci = VkQueryPoolCreateInfo{
             .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
@@ -13,7 +17,8 @@ TimestampPool::block TimestampPool::allocate() {
             .queryCount = this->TIMESTAMP_QUERY_POOL_SIZE};
 
         auto query_pool = VkQueryPool{};
-        vtable.CreateQueryPool(device, &qpci, nullptr, &query_pool);
+        device_context.vtable.CreateQueryPool(device_context.device, &qpci,
+                                              nullptr, &query_pool);
         return query_pool;
     }();
 
@@ -21,34 +26,32 @@ TimestampPool::block TimestampPool::allocate() {
         std::views::iota(0u, this->TIMESTAMP_QUERY_POOL_SIZE / 2) |
         std::views::transform([](const std::uint64_t& i) { return 2 * i; });
 
-    const auto available_keys = std::make_shared<available_query_indicies_t>(
+    auto available_indices = std::make_unique<available_query_indicies_t>(
         available_query_indicies_t{std::begin(key_range), std::end(key_range)});
 
-    auto command_buffers = [this]() -> auto {
+    auto command_buffers = [&, this]() -> auto {
         auto command_buffers =
             std::vector<VkCommandBuffer>(this->TIMESTAMP_QUERY_POOL_SIZE);
 
         const auto cbai = VkCommandBufferAllocateInfo{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = this->command_pool,
+            .commandPool = this->queue_context.command_pool,
             .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
             .commandBufferCount =
                 static_cast<std::uint32_t>(std::size(command_buffers)),
         };
-        vtable.AllocateCommandBuffers(device, &cbai,
-                                      std::data(command_buffers));
+        device_context.vtable.AllocateCommandBuffers(
+            device_context.device, &cbai, std::data(command_buffers));
         return std::make_unique<std::vector<VkCommandBuffer>>(command_buffers);
     }();
 
-    return block{.query_pool = query_pool,
-                 .available_indicies = available_keys,
+    return Block{.query_pool = query_pool,
+                 .available_indicies = std::move(available_indices),
                  .command_buffers = std::move(command_buffers)};
 }
 
-TimestampPool::TimestampPool(const VkDevice& device,
-                             const VkuDeviceDispatchTable& vtable,
-                             const VkCommandPool& command_pool)
-    : device(device), vtable(vtable), command_pool(command_pool) {
+TimestampPool::TimestampPool(QueueContext& queue_context)
+    : queue_context(queue_context) {
 
     // Allocate one block on construction, it's likely more than enough!
     this->blocks.emplace_back(this->allocate());
@@ -69,11 +72,11 @@ std::unique_ptr<TimestampPool::Handle> TimestampPool::acquire() {
     }();
 
     const auto query_pool = vacant_iter->query_pool;
-    auto& available_indices = vacant_iter->available_indicies;
+    auto& available_indices = *vacant_iter->available_indicies;
 
     // Grab any element from our set and erase it immediately after.
-    const auto query_index = *std::begin(*available_indices);
-    available_indices->erase(std::begin(*available_indices));
+    const auto query_index = *std::begin(available_indices);
+    available_indices.erase(std::begin(available_indices));
 
     const auto command_buffers = [&]() -> auto {
         auto command_buffers = std::array<VkCommandBuffer, 2>{};
@@ -91,8 +94,7 @@ std::unique_ptr<TimestampPool::Handle> TimestampPool::acquire() {
 }
 
 TimestampPool::Handle::Handle(
-    const std::weak_ptr<TimestampPool::available_query_indicies_t>&
-        index_origin,
+    TimestampPool::available_query_indicies_t& index_origin,
     const std::size_t block_index, const VkQueryPool& query_pool,
     const std::uint64_t query_index,
     const std::array<VkCommandBuffer, 2>& command_buffers)
@@ -101,10 +103,7 @@ TimestampPool::Handle::Handle(
       command_buffers(command_buffers) {}
 
 TimestampPool::Handle::~Handle() {
-    if (const auto origin = this->index_origin.lock(); origin) {
-        assert(!origin->contains(this->query_index));
-        origin->insert(this->query_index);
-    }
+    this->index_origin.insert(this->query_index);
 }
 
 void TimestampPool::Handle::setup_command_buffers(
@@ -136,6 +135,8 @@ void TimestampPool::poll() {
     this->cached_timestamps.clear();
     this->cached_timestamps.reserve(std::size(this->blocks));
 
+    const auto& device_context = this->queue_context.device_context;
+
     std::ranges::transform(
         this->blocks, std::back_inserter(this->cached_timestamps),
         [&, this](const auto& block) {
@@ -144,14 +145,15 @@ void TimestampPool::poll() {
             auto timestamps = std::make_unique<std::vector<std::uint64_t>>(
                 this->TIMESTAMP_QUERY_POOL_SIZE);
 
-            const auto result = vtable.GetQueryPoolResults(
-                this->device, query_pool, 0, this->TIMESTAMP_QUERY_POOL_SIZE,
+            const auto result = device_context.vtable.GetQueryPoolResults(
+                device_context.device, query_pool, 0,
+                this->TIMESTAMP_QUERY_POOL_SIZE,
                 this->TIMESTAMP_QUERY_POOL_SIZE * sizeof(std::uint64_t),
                 std::data(*timestamps), sizeof(uint64_t),
                 VK_QUERY_RESULT_64_BIT);
 
-            // Might return not ready when any of them aren't ready, which is
-            // not an error for our use case.
+            // Might return not ready when any of them aren't ready, which
+            // is not an error for our use case.
             assert(result == VK_SUCCESS || result == VK_NOT_READY);
 
             return timestamps;
@@ -167,6 +169,18 @@ std::uint64_t TimestampPool::get_polled(const Handle& handle) {
     assert(std::size(*cached_timestamp) < handle.query_index);
 
     return handle.query_index;
+}
+
+TimestampPool::~TimestampPool() {
+    const auto& device = this->queue_context.device_context.device;
+    const auto& vtable = this->queue_context.device_context.vtable;
+
+    for (const auto& block : this->blocks) {
+        vtable.FreeCommandBuffers(device, this->queue_context.command_pool,
+                                  std::size(*block.command_buffers),
+                                  std::data(*block.command_buffers));
+        vtable.DestroyQueryPool(device, block.query_pool, nullptr);
+    }
 }
 
 } // namespace low_latency

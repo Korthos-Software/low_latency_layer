@@ -1,10 +1,12 @@
 #include "queue_context.hh"
+#include "device_context.hh"
+#include "timestamp_pool.hh"
 
 namespace low_latency {
 
-static VkCommandPool make_command_pool(const VkDevice& device,
-                                       const std::uint32_t& queue_family_index,
-                                       const VkuDeviceDispatchTable& vtable) {
+static VkCommandPool
+make_command_pool(const DeviceContext& device_context,
+                  const std::uint32_t& queue_family_index) {
 
     const auto cpci = VkCommandPoolCreateInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -14,38 +16,51 @@ static VkCommandPool make_command_pool(const VkDevice& device,
     };
 
     auto command_pool = VkCommandPool{};
-    vtable.CreateCommandPool(device, &cpci, nullptr, &command_pool);
+    device_context.vtable.CreateCommandPool(device_context.device, &cpci,
+                                            nullptr, &command_pool);
     return command_pool;
 }
 
-QueueContext::QueueContext(const VkDevice& device, const VkQueue queue,
-                           const std::uint32_t& queue_family_index,
-                           const VkuDeviceDispatchTable& vtable)
-    : device(device), queue(queue), queue_family_index(queue_family_index),
-      vtable(vtable),
-      // Important we make the command pool before the timestamp pool, because it's a dependency.
-      command_pool(make_command_pool(device, queue_family_index, vtable)),
-      timestamp_pool(device, vtable, command_pool) {
+static VkSemaphore make_semaphore(const DeviceContext& device_context) {
 
-    this->semaphore = [&]() -> VkSemaphore {
-        const auto stci = VkSemaphoreTypeCreateInfo{
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-            .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-            .initialValue = 0,
-        };
+    const auto stci = VkSemaphoreTypeCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+        .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+        .initialValue = 0,
+    };
 
-        const auto sci = VkSemaphoreCreateInfo{
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .pNext = &stci,
-        };
+    const auto sci = VkSemaphoreCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = &stci,
+    };
 
-        auto semaphore = VkSemaphore{};
-        vtable.CreateSemaphore(device, &sci, nullptr, &semaphore);
-        return semaphore;
-    }();
+    auto semaphore = VkSemaphore{};
+    device_context.vtable.CreateSemaphore(device_context.device, &sci, nullptr,
+                                          &semaphore);
+    return semaphore;
 }
 
+QueueContext::QueueContext(DeviceContext& device_context, const VkQueue& queue,
+                           const std::uint32_t& queue_family_index)
+    : device_context(device_context), queue(queue),
+      queue_family_index(queue_family_index),
+      // Important we make the command pool before the timestamp pool, because
+      // it's a dependency.
+      command_pool(make_command_pool(device_context, queue_family_index)),
+      semaphore(make_semaphore(device_context)),
+      timestamp_pool(std::make_unique<TimestampPool>(*this)) {}
+
 QueueContext::~QueueContext() {
+    // Ugly - destructors of timestamp_pool should be called before we destroy
+    // our vulkan objects.
+    this->timestamp_pool.reset();
+
+    const auto& vtable = this->device_context.vtable;
+
+    vtable.DestroySemaphore(this->device_context.device, this->semaphore,
+                            nullptr);
+    vtable.DestroyCommandPool(this->device_context.device, this->command_pool,
+                              nullptr);
 }
 
 } // namespace low_latency
