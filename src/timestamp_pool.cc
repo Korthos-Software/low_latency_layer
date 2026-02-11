@@ -17,6 +17,7 @@ TimestampPool::Block TimestampPool::allocate() {
             .queryCount = this->TIMESTAMP_QUERY_POOL_SIZE};
 
         auto query_pool = VkQueryPool{};
+
         device_context.vtable.CreateQueryPool(device_context.device, &qpci,
                                               nullptr, &query_pool);
         return query_pool;
@@ -42,6 +43,9 @@ TimestampPool::Block TimestampPool::allocate() {
         };
         device_context.vtable.AllocateCommandBuffers(
             device_context.device, &cbai, std::data(command_buffers));
+        std::ranges::for_each(command_buffers, [&](const auto& cb) {
+            device_context.sdld(device_context.device, cb);
+        });
         return std::make_unique<std::vector<VkCommandBuffer>>(command_buffers);
     }();
 
@@ -103,7 +107,7 @@ TimestampPool::Handle::Handle(
       command_buffers(command_buffers) {}
 
 TimestampPool::Handle::~Handle() {
-    this->index_origin.insert(this->query_index);
+    assert(this->index_origin.insert(this->query_index).second);
 }
 
 void TimestampPool::Handle::setup_command_buffers(
@@ -174,7 +178,6 @@ std::uint64_t TimestampPool::get_polled(const Handle& handle) {
 TimestampPool::~TimestampPool() {
     const auto& device = this->queue_context.device_context.device;
     const auto& vtable = this->queue_context.device_context.vtable;
-
     for (const auto& block : this->blocks) {
         vtable.FreeCommandBuffers(device, this->queue_context.command_pool,
                                   std::size(*block.command_buffers),

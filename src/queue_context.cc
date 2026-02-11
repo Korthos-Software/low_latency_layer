@@ -51,12 +51,15 @@ QueueContext::QueueContext(DeviceContext& device_context, const VkQueue& queue,
       timestamp_pool(std::make_unique<TimestampPool>(*this)) {}
 
 QueueContext::~QueueContext() {
+    
+    // nuke our handles, so we avoid segfaults for now
+    this->handle_hack.clear();
+    
     // Ugly - destructors of timestamp_pool should be called before we destroy
     // our vulkan objects.
     this->timestamp_pool.reset();
 
     const auto& vtable = this->device_context.vtable;
-
     vtable.DestroySemaphore(this->device_context.device, this->semaphore,
                             nullptr);
     vtable.DestroyCommandPool(this->device_context.device, this->command_pool,

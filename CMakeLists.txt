@@ -39,3 +39,22 @@ add_custom_command(TARGET ${LIBRARY_NAME} POST_BUILD
     "${CMAKE_CURRENT_SOURCE_DIR}/low_latency_layer.json"
 	"${OUTPUT_DIR}/"
 )
+
+set(SANITIZE_FLAGS
+  -fsanitize=address,undefined,leak
+  -fno-omit-frame-pointer
+  -fno-optimize-sibling-calls
+  -fno-sanitize-recover=all
+  -fsanitize-address-use-after-scope
+)
+
+target_compile_options(${LIBRARY_NAME} PRIVATE
+    #${SANITIZE_FLAGS}
+    -g3
+    -O1
+    -D_GLIBCXX_ASSERTIONS
+)
+
+target_link_options(${LIBRARY_NAME} PRIVATE 
+    #${SANITIZE_FLAGS}
+)

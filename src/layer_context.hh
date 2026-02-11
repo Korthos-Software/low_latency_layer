@@ -2,10 +2,13 @@
 #define LAYER_CONTEXT_HH_
 
 #include <mutex>
-#include <variant>
+#include <unordered_map>
+#include <vulkan/vulkan_core.h>
 
+#include "context.hh"
 #include "device_context.hh"
 #include "instance_context.hh"
+#include "physical_device_context.hh"
 #include "queue_context.hh"
 
 // The purpose of this file is to provide a definition for the highest level
@@ -19,63 +22,58 @@
 
 namespace low_latency {
 
+// All these templates do is make it so we can go from some DispatchableType
+// to their respective context's with nice syntax.
+
 template <typename T>
 concept DispatchableType =
     std::same_as<std::remove_cvref_t<T>, VkInstance> ||
-    std::same_as<std::remove_cvref_t<T>, VkDevice> ||
     std::same_as<std::remove_cvref_t<T>, VkPhysicalDevice> ||
+    std::same_as<std::remove_cvref_t<T>, VkDevice> ||
     std::same_as<std::remove_cvref_t<T>, VkQueue>;
 
-struct LayerContext {
-  public:
-    using ContextVariant = std::variant<std::unique_ptr<DeviceContext>,
-                                        std::unique_ptr<InstanceContext>>;
+template <class D> struct context_for_t;
+template <> struct context_for_t<VkInstance> {
+    using context = InstanceContext;
+};
+template <> struct context_for_t<VkPhysicalDevice> {
+    using context = PhysicalDeviceContext;
+};
+template <> struct context_for_t<VkDevice> {
+    using context = DeviceContext;
+};
+template <> struct context_for_t<VkQueue> {
+    using context = QueueContext;
+};
+template <DispatchableType D>
+using dispatch_context_t = typename context_for_t<D>::context;
 
+struct LayerContext final : public Context {
   public:
     std::mutex mutex;
-    std::unordered_map<void*, ContextVariant> contexts;
-    std::uint64_t current_frame = 0;
+    std::unordered_map<void*, std::shared_ptr<Context>> contexts;
 
   public:
     LayerContext();
-    LayerContext(const LayerContext&) = delete;
-    LayerContext(LayerContext&&) = delete;
-    LayerContext operator==(const LayerContext&) = delete;
-    LayerContext operator==(LayerContext&&) = delete;
-    ~LayerContext();
+    virtual ~LayerContext();
 
   public:
-    template <DispatchableType T> static void* get_key(const T& dt) {
-        return *reinterpret_cast<void**>(dt);
+    template <DispatchableType DT> static void* get_key(const DT& dt) {
+        return reinterpret_cast<void*>(dt);
     }
 
-    template <typename T, DispatchableType DispatchableType>
-        requires(!std::same_as<T, QueueContext>)
-    T& get_context(const DispatchableType& dt) {
+    template <DispatchableType DT>
+    std::shared_ptr<dispatch_context_t<DT>> get_context(const DT& dt) {
         const auto key = get_key(dt);
 
+        const auto lock = std::scoped_lock(this->mutex);
         const auto it = this->contexts.find(key);
         assert(it != std::end(this->contexts));
 
-        const auto ptr = std::get_if<std::unique_ptr<T>>(&it->second);
-        assert(ptr && *ptr);
-
-        return **ptr;
-    }
-
-    // QueueContext's are actually owned by a device so look there instead.
-    template <typename T, DispatchableType DispatchableType>
-        requires(std::same_as<T, QueueContext>)
-    T& get_context(const DispatchableType& dt) {
-
-        const auto& device_context = this->get_context<DeviceContext>(dt);
-        const auto& queue_context = device_context.queue_contexts;
-
-        const auto it = device_context.queue_contexts.find(dt);
-        assert(it != std::end(queue_context));
-
-        const auto& ptr = it->second;
-        return *ptr;
+        using context_t = dispatch_context_t<DT>;
+        auto ptr = std::dynamic_pointer_cast<context_t>(it->second);
+        assert(ptr);
+        return ptr;
     }
 };
 

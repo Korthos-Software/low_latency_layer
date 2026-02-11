@@ -69,18 +69,18 @@ class TimestampPool final {
   public:
     // A handle represents two std::uint64_t blocks of timestamp memory and two
     // command buffers.
-    struct Handle {
+    struct Handle final {
       private:
         friend class TimestampPool;
 
       private:
         available_query_indicies_t& index_origin;
-        std::size_t block_index;
+        const std::size_t block_index;
 
       public:
-        VkQueryPool query_pool;
-        std::uint64_t query_index;
-        std::array<VkCommandBuffer, 2> command_buffers;
+        const VkQueryPool query_pool;
+        const std::uint64_t query_index;
+        const std::array<VkCommandBuffer, 2> command_buffers;
 
       public:
         Handle(TimestampPool::available_query_indicies_t& index_origin,
@@ -89,8 +89,8 @@ class TimestampPool final {
                const std::array<VkCommandBuffer, 2>& command_buffers);
         Handle(const Handle& handle) = delete;
         Handle(Handle&&) = delete;
-        Handle operator==(const Handle& handle) = delete;
-        Handle operator==(Handle&&) = delete;
+        Handle operator=(const Handle& handle) = delete;
+        Handle operator=(Handle&&) = delete;
         ~Handle(); // frees from the pool
 
       public:
@@ -104,8 +104,8 @@ class TimestampPool final {
     TimestampPool(QueueContext& queue_context);
     TimestampPool(const TimestampPool&) = delete;
     TimestampPool(TimestampPool&&) = delete;
-    TimestampPool operator==(const TimestampPool&) = delete;
-    TimestampPool operator==(TimestampPool&&) = delete;
+    TimestampPool operator=(const TimestampPool&) = delete;
+    TimestampPool operator=(TimestampPool&&) = delete;
     ~TimestampPool();
 
   public:
