@@ -67,7 +67,7 @@ class TimestampPool final {
     std::vector<std::unique_ptr<std::vector<std::uint64_t>>> cached_timestamps;
 
   public:
-    // A handle represents two std::uint64_t blocks of timestamp memory and two
+    // A handle represents two std::uint64_t blocks oftimestamp memory and two
     // command buffers.
     struct Handle final {
       private:
@@ -110,11 +110,11 @@ class TimestampPool final {
 
   public:
     // Hands out a Handle with a pool and index of two uint64_t's.
-    std::unique_ptr<Handle> acquire();
+    std::shared_ptr<Handle> acquire();
 
     void poll(); // saves the current state for future get's.
 
-    std::uint64_t get_polled(const Handle& handle);
+    std::uint64_t get_polled(const Handle& handle, const bool hack = false);
 };
 
 } // namespace low_latency

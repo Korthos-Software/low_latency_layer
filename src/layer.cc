@@ -1,12 +1,9 @@
 #include "layer.hh"
 
-#include <iostream>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <utility>
-
-// hack
-#include <deque>
 
 #include <vulkan/utility/vk_dispatch_table.h>
 #include <vulkan/vk_layer.h>
@@ -90,6 +87,7 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     auto vtable = VkuInstanceDispatchTable{
         INSTANCE_VTABLE_LOAD(DestroyInstance),
         INSTANCE_VTABLE_LOAD(EnumeratePhysicalDevices),
+        INSTANCE_VTABLE_LOAD(GetPhysicalDeviceProperties),
         INSTANCE_VTABLE_LOAD(GetInstanceProcAddr),
         INSTANCE_VTABLE_LOAD(CreateDevice),
         INSTANCE_VTABLE_LOAD(EnumerateDeviceExtensionProperties),
@@ -307,16 +305,20 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         DEVICE_VTABLE_LOAD(GetSemaphoreCounterValueKHR),
         DEVICE_VTABLE_LOAD(CmdWriteTimestamp2KHR),
         DEVICE_VTABLE_LOAD(QueueSubmit2KHR),
+        DEVICE_VTABLE_LOAD(GetCalibratedTimestampsKHR),
     };
 #undef DEVICE_VTABLE_LOAD
+
+    const auto physical_context = layer_context.get_context(physical_device);
 
     const auto key = layer_context.get_key(*pDevice);
     const auto lock = std::scoped_lock{layer_context.mutex};
     assert(!layer_context.contexts.contains(key));
 
     layer_context.contexts.try_emplace(
-        key, std::make_shared<DeviceContext>(instance_context, *pDevice, sdld,
-                                             std::move(vtable)));
+        key,
+        std::make_shared<DeviceContext>(instance_context, *physical_context,
+                                        *pDevice, sdld, std::move(vtable)));
 
     return VK_SUCCESS;
 }
@@ -415,6 +417,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(
         return result;
     }
 
+    context->notify_acquire(swapchain, *pImageIndex, semaphore);
+
     return VK_SUCCESS;
 }
 
@@ -429,6 +433,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImage2KHR(
 
         return result;
     }
+
+    context->notify_acquire(pAcquireInfo->swapchain, *pImageIndex,
+                            pAcquireInfo->semaphore);
 
     return VK_SUCCESS;
 }
@@ -465,7 +472,7 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     next_submit_infos[0].pCommandBuffers = std::data(next_command_buffers);
     next_submit_infos[0].commandBufferCount = std::size(next_command_buffers);
 
-    const auto next_signal = queue_context->semaphore_sequence + 1;
+    const auto next_signal = 1 + queue_context->semaphore_sequence++;
     const auto tail_tssi = VkTimelineSemaphoreSubmitInfo{
         .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,
         .signalSemaphoreValueCount = 1,
@@ -488,13 +495,8 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
         return res;
     }
 
-    // Hack for now, store timestamp handles.
-    queue_context->handle_hack.push_front(std::move(timestamp_handle));
-    if (std::size(queue_context->handle_hack) > 250) {
-        queue_context->handle_hack.pop_back();
-    }
-
-    ++queue_context->semaphore_sequence;
+    queue_context->notify_submit(std::span{submit_info, submit_count},
+                                 next_signal, std::move(timestamp_handle));
 
     return VK_SUCCESS;
 }
@@ -534,10 +536,12 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     next_submit_infos[0].commandBufferInfoCount =
         std::size(next_command_buffers);
 
+    const auto target_semaphore_sequence =
+        1 + queue_context->semaphore_sequence++;
     const auto tail_ssi = VkSemaphoreSubmitInfo{
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
         .semaphore = queue_context->semaphore,
-        .value = queue_context->semaphore_sequence + 1,
+        .value = target_semaphore_sequence,
         .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
     };
     const auto tail_cbsi = VkCommandBufferSubmitInfo{
@@ -559,13 +563,9 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
         return res;
     }
 
-    // hack
-    queue_context->handle_hack.push_front(std::move(timestamp_handle));
-    if (std::size(queue_context->handle_hack) > 250) {
-        queue_context->handle_hack.pop_back();
-    }
-
-    ++queue_context->semaphore_sequence;
+    queue_context->notify_submit({submit_infos, submit_count},
+                                 target_semaphore_sequence,
+                                 std::move(timestamp_handle));
 
     return VK_SUCCESS;
 }
@@ -580,13 +580,23 @@ vkQueueSubmit2KHR(VkQueue queue, std::uint32_t submit_count,
 static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
 
-    const auto& vtable =
-        layer_context.get_context(queue)->device_context.vtable;
+    const auto queue_context = layer_context.get_context(queue);
+    const auto& vtable = queue_context->device_context.vtable;
 
     if (const auto res = vtable.QueuePresentKHR(queue, present_info);
         res != VK_SUCCESS) {
 
         return res;
+    }
+
+    if (present_info) { // might not be needed
+        queue_context->notify_present(*present_info);
+    }
+
+    if (const auto sleep_time = queue_context->get_delay_time();
+        sleep_time.has_value()) {
+
+        std::this_thread::sleep_for(*sleep_time);
     }
 
     return VK_SUCCESS;

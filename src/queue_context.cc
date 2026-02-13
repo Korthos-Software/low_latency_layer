@@ -2,6 +2,9 @@
 #include "device_context.hh"
 #include "timestamp_pool.hh"
 
+#include <chrono>
+#include <iostream>
+
 namespace low_latency {
 
 static VkCommandPool
@@ -51,12 +54,9 @@ QueueContext::QueueContext(DeviceContext& device_context, const VkQueue& queue,
       timestamp_pool(std::make_unique<TimestampPool>(*this)) {}
 
 QueueContext::~QueueContext() {
-    
-    // nuke our handles, so we avoid segfaults for now
-    this->handle_hack.clear();
-    
-    // Ugly - destructors of timestamp_pool should be called before we destroy
-    // our vulkan objects.
+
+    this->in_flight_frames.clear();
+    this->submissions.clear();
     this->timestamp_pool.reset();
 
     const auto& vtable = this->device_context.vtable;
@@ -64,6 +64,290 @@ QueueContext::~QueueContext() {
                             nullptr);
     vtable.DestroyCommandPool(this->device_context.device, this->command_pool,
                               nullptr);
+}
+
+void QueueContext::notify_submit(
+    std::span<const VkSubmitInfo> infos,
+    const std::uint64_t target_semaphore_sequence,
+    std::shared_ptr<TimestampPool::Handle>&& handle) {
+
+    // This has an issue where we're collecting all signals and waits and
+    // treating a single submit call as finishing
+
+    auto signals = std::unordered_set<VkSemaphore>{};
+    auto waits = std::unordered_set<VkSemaphore>{};
+    for (const auto& info : infos) {
+        std::ranges::copy_n(info.pWaitSemaphores, info.waitSemaphoreCount,
+                            std::inserter(waits, std::end(waits)));
+        std::ranges::copy_n(info.pSignalSemaphores, info.signalSemaphoreCount,
+                            std::inserter(signals, std::end(signals)));
+    }
+
+    this->submissions.emplace_back(std::make_unique<Submission>(
+        std::move(signals), std::move(waits), target_semaphore_sequence,
+        std::move(handle)));
+
+    // TODO HACK
+    if (std::size(this->submissions) > 100) {
+        this->submissions.pop_front();
+    }
+}
+
+void QueueContext::notify_submit(
+    std::span<const VkSubmitInfo2> infos,
+    const std::uint64_t target_semaphore_sequence,
+    std::shared_ptr<TimestampPool::Handle>&& handle) {
+
+    auto signals = std::unordered_set<VkSemaphore>{};
+    auto waits = std::unordered_set<VkSemaphore>{};
+    for (const auto& info : infos) {
+        constexpr auto get_semaphore = [](const auto& semaphore_info) {
+            return semaphore_info.semaphore;
+        };
+        std::ranges::transform(info.pSignalSemaphoreInfos,
+                               std::next(info.pSignalSemaphoreInfos,
+                                         info.signalSemaphoreInfoCount),
+                               std::inserter(signals, std::end(signals)),
+                               get_semaphore);
+        std::ranges::transform(
+            info.pWaitSemaphoreInfos,
+            std::next(info.pWaitSemaphoreInfos, info.waitSemaphoreInfoCount),
+            std::inserter(waits, std::end(waits)), get_semaphore);
+    }
+
+    this->submissions.emplace_back(std::make_unique<Submission>(
+        std::move(signals), std::move(waits), target_semaphore_sequence,
+        std::move(handle)));
+
+    // TODO HACK
+    if (std::size(this->submissions) > 100) {
+        this->submissions.pop_front();
+    }
+}
+
+void QueueContext::notify_present(const VkPresentInfoKHR& info) {
+
+    auto frame = [&]() -> std::unique_ptr<Frame> {
+        const auto waits = [&]() {
+            auto waits = std::unordered_set<VkSemaphore>{};
+            std::ranges::copy_n(info.pWaitSemaphores, info.waitSemaphoreCount,
+                                std::inserter(waits, std::end(waits)));
+            return waits;
+        }();
+
+        const auto wait_semaphores = std::unordered_set<VkSemaphore>{
+            info.pWaitSemaphores,
+            std::next(info.pWaitSemaphores, info.waitSemaphoreCount)};
+
+        auto collected_semaphores = std::unordered_set<VkSemaphore>{};
+        for (auto i = std::uint32_t{0}; i < info.swapchainCount; ++i) {
+            const auto& swapchain = info.pSwapchains[i];
+            const auto& index = info.pImageIndices[i];
+
+            // Shouldn't be possible to present to a swapchain that wasn't
+            // waited in
+
+            const auto& signals = this->device_context.swapchain_signals;
+            const auto swapchain_it = signals.find(swapchain);
+            assert(swapchain_it != std::end(signals));
+            const auto index_it = swapchain_it->second.find(index);
+            assert(index_it != std::end(swapchain_it->second));
+
+            const auto semaphore = index_it->second;
+            collected_semaphores.emplace(index_it->second);
+        }
+
+        const auto start_submission_it = std::ranges::find_if(
+            std::rbegin(this->submissions), std::rend(this->submissions),
+            [&](const auto& submission) {
+                return std::ranges::any_of(
+                    submission->waits, [&](const auto& wait) {
+                        return collected_semaphores.contains(wait);
+                    });
+            });
+
+        if (start_submission_it == std::rend(this->submissions)) {
+            std::cout << "couldn't find starting submission!\n";
+            return nullptr;
+        }
+        const auto& start_submission = *start_submission_it;
+
+        const auto end_submission_it = std::ranges::find_if(
+            std::rbegin(this->submissions), std::rend(this->submissions),
+            [&](const auto& submission) {
+                return std::ranges::any_of(
+                    submission->signals, [&](const auto& signal) {
+                        return wait_semaphores.contains(signal);
+                    });
+            });
+
+        if (end_submission_it == std::rend(this->submissions)) {
+            std::cout << "couldn't find ending submission!\n";
+            return nullptr;
+        }
+        const auto& end_submission = *end_submission_it;
+
+        return std::make_unique<Frame>(Frame{
+            .start_context = *this,
+            .start = start_submission->timestamp_handle,
+            .target_start_sequence =
+                start_submission->target_semaphore_sequence,
+            .end_context = *this,
+            .end = start_submission->timestamp_handle,
+            .target_end_sequence = start_submission->target_semaphore_sequence,
+        });
+    }();
+
+    this->in_flight_frames.emplace_back(std::move(frame));
+    
+    // hack
+    if (this->in_flight_frames.size() > 5) {
+        this->in_flight_frames.pop_front();
+    }
+}
+
+// now it's all coming together
+std::optional<QueueContext::duration_t> QueueContext::get_delay_time() {
+    if (!std::size(this->in_flight_frames)) {
+        return std::nullopt;
+    }
+
+    auto seq = std::uint64_t{};
+    this->device_context.vtable.GetSemaphoreCounterValueKHR(
+        this->device_context.device, this->semaphore, &seq);
+
+    // Get semaphore first, then poll!
+    this->timestamp_pool->poll();
+
+    // idk how frequently we should call this.
+    this->device_context.calibrate_timestamps();
+
+    static auto gpu_frametimes = std::deque<uint64_t>{};
+    static auto cpu_frametimes = std::deque<uint64_t>{};
+
+    const auto S = std::size(this->in_flight_frames);
+
+    std::cout << "\nSTART FRAME READOUT\n";
+    std::cout << "error bound: " << this->device_context.clock.error_bound
+              << '\n';
+    std::cout << "num frames in flight: " << S << '\n';
+    std::cout << "from oldest -> newest\n";
+
+    // const auto b_seq = semaphore_from_context(*this);
+    const auto now = std::chrono::steady_clock::now();
+
+    auto i = std::size_t{0};
+    for (; i < std::size(this->in_flight_frames); ++i) {
+        const auto& frame = this->in_flight_frames[i];
+        std::cout << "    Evaluating the frame that's " << S - i - 1
+                  << " behind\n";
+        if (!frame) {
+            std::cout << "        nullptr!\n";
+            continue;
+        }
+
+        std::cout << "    target start: " << frame->target_start_sequence << '\n';
+        std::cout << "    target end: " << frame->target_end_sequence << '\n';
+        if (seq < frame->target_start_sequence) {
+            std::cout << "        frame hasn't started yet!\n";
+            continue;
+        }
+
+        const auto start_ticks =
+            frame->start_context.timestamp_pool->get_polled(*frame->start);
+        std::cout << "        START TICKS: " << start_ticks << '\n';
+        const auto& a_clock = frame->start_context.device_context.clock;
+        const auto a = a_clock.ticks_to_time(start_ticks);
+        
+        {
+            using namespace std::chrono;
+            const auto diff = now - a;
+            const auto ms = duration_cast<milliseconds>(diff);
+            const auto us = duration_cast<microseconds>(diff - ms);
+            const auto ns = duration_cast<nanoseconds>(diff - ms - us);
+            std::cout << "        frame started: " << ms << " ms " << us
+                      << " us " << ns << " ns ago\n";
+        }
+
+        if (seq < frame->target_end_sequence) {
+            std::cout << "        frame hasn't ended yet!\n";
+            continue;
+        }
+
+
+        const auto end_ticks =
+            frame->end_context.timestamp_pool->get_polled(*frame->end, true);
+        const auto& b_clock = frame->end_context.device_context.clock;
+        std::cout << "        END_TICKS: " << end_ticks << '\n';
+        const auto b = b_clock.ticks_to_time(end_ticks);
+        {
+            using namespace std::chrono;
+            if (now <= b) {
+                std::cout << "b happened before now?\n";
+            }
+            const auto diff = now - b;
+            const auto ms = duration_cast<milliseconds>(diff);
+            const auto us = duration_cast<microseconds>(diff - ms);
+            const auto ns = duration_cast<nanoseconds>(diff - ms - us);
+            std::cout << "        frame ended: " << ms << " ms " << us
+                      << " us " << ns << " ns ago\n";
+        }
+
+        const auto gpu_time = b - a;
+        {
+            using namespace std::chrono;
+            const auto diff = gpu_time;
+            const auto ms = duration_cast<milliseconds>(diff);
+            const auto us = duration_cast<microseconds>(diff - ms);
+            const auto ns = duration_cast<nanoseconds>(diff - ms - us);
+            std::cout << "        gpu_time: " << ms << " ms " << us
+                      << " us " << ns << " ns ago\n";
+        }
+
+        /*
+        cpu_frametimes.emplace_back(cpu_time);
+        gpu_frametimes.emplace_back(gpu_time);
+        */
+    }
+
+    /*
+    if (remove_index.has_value()) {
+        this->in_flight_frames.erase(std::begin(this->in_flight_frames),
+                                     std::begin(this->in_flight_frames) +
+                                         *remove_index);
+    }
+    */
+
+    /*
+    auto g_copy = gpu_frametimes;
+    auto c_copy = cpu_frametimes;
+    std::ranges::sort(g_copy);
+    std::ranges::sort(c_copy);
+
+    constexpr auto N = 49;
+    if (std::size(cpu_frametimes) < N) {
+        return std::nullopt;
+    }
+
+    const auto F = std::size(g_copy);
+    // close enough to median lol
+    const auto g = g_copy[F / 2];
+    const auto c = c_copy[F / 2];
+
+    std::cout << g << '\n';
+
+    std::cout << "    median gpu: " << (g / 1'000'000) << " ms " << g / 1'000
+              << " us " << g << " ns\n";
+    std::cout << "    median cpu: " << c / 1'000'000 << " ms " << c / 1'000
+              << " us " << c << " ns\n";
+
+    if (F > N) {
+        gpu_frametimes.pop_front();
+        cpu_frametimes.pop_front();
+    }
+    */
+
+    return std::nullopt;
 }
 
 } // namespace low_latency

@@ -14,6 +14,8 @@ class PhysicalDeviceContext final : public Context {
     InstanceContext& instance;
 
     const VkPhysicalDevice physical_device;
+    
+    std::unique_ptr<VkPhysicalDeviceProperties> properties;
 
   public:
     PhysicalDeviceContext(InstanceContext& instance_context,

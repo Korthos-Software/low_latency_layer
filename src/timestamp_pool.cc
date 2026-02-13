@@ -61,8 +61,8 @@ TimestampPool::TimestampPool(QueueContext& queue_context)
     this->blocks.emplace_back(this->allocate());
 }
 
-std::unique_ptr<TimestampPool::Handle> TimestampPool::acquire() {
-    const auto& vacant_iter = [this]() -> auto {
+std::shared_ptr<TimestampPool::Handle> TimestampPool::acquire() {
+    const auto vacant_iter = [this]() -> auto {
         const auto it =
             std::ranges::find_if(this->blocks, [](const auto& block) {
                 return std::size(*block.available_indicies);
@@ -93,7 +93,7 @@ std::unique_ptr<TimestampPool::Handle> TimestampPool::acquire() {
     const auto block_index = static_cast<std::size_t>(
         std::distance(std::begin(this->blocks), vacant_iter));
 
-    return std::make_unique<Handle>(available_indices, block_index, query_pool,
+    return std::make_shared<Handle>(available_indices, block_index, query_pool,
                                     query_index, command_buffers);
 }
 
@@ -164,15 +164,15 @@ void TimestampPool::poll() {
         });
 };
 
-std::uint64_t TimestampPool::get_polled(const Handle& handle) {
+std::uint64_t TimestampPool::get_polled(const Handle& handle, const bool hack) {
 
     assert(handle.block_index < std::size(this->cached_timestamps));
 
     const auto& cached_timestamp = this->cached_timestamps[handle.block_index];
     assert(cached_timestamp != nullptr);
-    assert(std::size(*cached_timestamp) < handle.query_index);
+    assert(handle.query_index < std::size(*cached_timestamp));
 
-    return handle.query_index;
+    return (*cached_timestamp)[handle.query_index + hack];
 }
 
 TimestampPool::~TimestampPool() {
