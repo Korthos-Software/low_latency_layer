@@ -1,9 +1,12 @@
 #include "layer.hh"
 
+#include <memory>
+#include <span>
 #include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <vulkan/utility/vk_dispatch_table.h>
 #include <vulkan/vk_layer.h>
@@ -224,7 +227,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         const auto wanted_extensions = {
             VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
             VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME,
-            VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME};
+            VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
+            VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME};
 
         for (const auto& wanted : wanted_extensions) {
 
@@ -274,7 +278,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
 
         return result;
     }
-
+    
 #define DEVICE_VTABLE_LOAD(name)                                               \
     .name = reinterpret_cast<PFN_vk##name>(gdpa(*pDevice, "vk" #name))
     auto vtable = VkuDeviceDispatchTable{
@@ -294,9 +298,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         DEVICE_VTABLE_LOAD(BeginCommandBuffer),
         DEVICE_VTABLE_LOAD(EndCommandBuffer),
         DEVICE_VTABLE_LOAD(ResetCommandBuffer),
-        DEVICE_VTABLE_LOAD(CmdResetQueryPool),
         DEVICE_VTABLE_LOAD(CmdDraw),
         DEVICE_VTABLE_LOAD(CmdDrawIndexed),
+        DEVICE_VTABLE_LOAD(CmdResetQueryPool),
         DEVICE_VTABLE_LOAD(GetDeviceQueue2),
         DEVICE_VTABLE_LOAD(QueueSubmit2),
         DEVICE_VTABLE_LOAD(AcquireNextImageKHR),
@@ -306,6 +310,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         DEVICE_VTABLE_LOAD(CmdWriteTimestamp2KHR),
         DEVICE_VTABLE_LOAD(QueueSubmit2KHR),
         DEVICE_VTABLE_LOAD(GetCalibratedTimestampsKHR),
+        DEVICE_VTABLE_LOAD(ResetQueryPoolEXT),
     };
 #undef DEVICE_VTABLE_LOAD
 
@@ -442,61 +447,81 @@ static VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImage2KHR(
 
 static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
-              const VkSubmitInfo* submit_info, VkFence fence) {
+              const VkSubmitInfo* submit_infos, VkFence fence) {
 
     const auto& queue_context = layer_context.get_context(queue);
     const auto& vtable = queue_context->device_context.vtable;
 
     if (!submit_count) { // no-op submit we shouldn't worry about
-        return vtable.QueueSubmit(queue, submit_count, submit_info, fence);
+        return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
     }
 
-    // Create a new vector of submit infos.
-    auto next_submit_infos = std::vector<VkSubmitInfo>{};
+    // We have to avoid casting away the const* of the passed VkSubmitInfos.
+    // We wrap every single submission with *two* extra VkSubmitInfos to
+    // accomplish this. The first executes a command buffer that 
 
-    auto timestamp_handle = queue_context->timestamp_pool->acquire();
-    timestamp_handle->setup_command_buffers(vtable);
+    using cb_vect = std::vector<VkCommandBuffer>;
+    using tssi_ptr_t = std::unique_ptr<VkTimelineSemaphoreSubmitInfo>;
+    auto next_submits = std::vector<VkSubmitInfo>{};
+    auto next_cbs = std::vector<std::unique_ptr<cb_vect>>{};
+    auto next_signals = std::vector<std::unique_ptr<std::uint64_t>>{};
+    auto next_tssis = std::vector<tssi_ptr_t>{};
+    auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
-    const auto& [head_cb, tail_cb] = timestamp_handle->command_buffers;
+    for (const auto& submit_info : std::span{submit_infos, submit_count}) {
+        const auto head_handle = queue_context->timestamp_pool->acquire();
+        const auto tail_handle = queue_context->timestamp_pool->acquire();
 
-    const auto next_command_buffers = [&]() -> auto {
-        auto next_command_buffers = std::vector<VkCommandBuffer>{head_cb};
-        std::ranges::copy_n(submit_info[0].pCommandBuffers,
-                            submit_info[0].commandBufferCount,
-                            std::back_inserter(next_command_buffers));
-        return next_command_buffers;
-    }();
+        // Head is special as we need to inject a CB into a copy of
+        // their command buffers that records the time the waits completed.
+        next_cbs.emplace_back([&]() -> auto {
+            auto cbs = std::make_unique<std::vector<VkCommandBuffer>>();
+            head_handle->setup_command_buffers(*tail_handle, *queue_context);
+            cbs->push_back(head_handle->command_buffer);
+            std::ranges::copy_n(submit_info.pCommandBuffers,
+                                submit_info.commandBufferCount,
+                                std::back_inserter(*cbs));
+            cbs->push_back(tail_handle->command_buffer);
+            return cbs;
+        }());
+        next_submits.push_back(submit_info);
+        next_submits.back().pCommandBuffers = std::data(*next_cbs.back());
+        next_submits.back().commandBufferCount = std::size(*next_cbs.back());
 
-    std::ranges::copy_n(submit_info, submit_count,
-                        std::back_inserter(next_submit_infos));
-    next_submit_infos[0].pCommandBuffers = std::data(next_command_buffers);
-    next_submit_infos[0].commandBufferCount = std::size(next_command_buffers);
+        const auto next_signal = 1 + queue_context->semaphore_sequence++;
 
-    const auto next_signal = 1 + queue_context->semaphore_sequence++;
-    const auto tail_tssi = VkTimelineSemaphoreSubmitInfo{
-        .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,
-        .signalSemaphoreValueCount = 1,
-        .pSignalSemaphoreValues = &next_signal,
-    };
-    next_submit_infos.push_back(VkSubmitInfo{
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .pNext = &tail_tssi,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &tail_cb,
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &queue_context->semaphore,
-    });
+        next_signals.push_back(std::make_unique<std::uint64_t>(next_signal));
 
-    if (const auto res =
-            vtable.QueueSubmit(queue, std::size(next_submit_infos),
-                               std::data(next_submit_infos), fence);
+        next_tssis.push_back(std::make_unique<VkTimelineSemaphoreSubmitInfo>(
+            VkTimelineSemaphoreSubmitInfo{
+                .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,
+                .signalSemaphoreValueCount = 1,
+                .pSignalSemaphoreValues = next_signals.back().get(),
+            }));
+        next_submits.push_back(VkSubmitInfo{
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pNext = next_tssis.back().get(),
+            .commandBufferCount = 1,
+            .pCommandBuffers = &tail_handle->command_buffer,
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &queue_context->semaphore,
+        });
+
+        queue_context->notify_submit(submit_info, next_signal, head_handle,
+                                     tail_handle);
+
+        handles.push_back(head_handle);
+        handles.push_back(tail_handle);
+    }
+
+    if (const auto res = vtable.QueueSubmit(queue, std::size(next_submits),
+                                            std::data(next_submits), fence);
         res != VK_SUCCESS) {
 
         return res;
     }
 
-    queue_context->notify_submit(std::span{submit_info, submit_count},
-                                 next_signal, std::move(timestamp_handle));
+    // ?!?
 
     return VK_SUCCESS;
 }
@@ -509,10 +534,12 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     const auto queue_context = layer_context.get_context(queue);
     const auto& vtable = queue_context->device_context.vtable;
 
-    if (!submit_count) {
+    // TODO
+    if (!submit_count || true) {
         return vtable.QueueSubmit2(queue, submit_count, submit_infos, fence);
     }
 
+    /*
     auto timestamp_handle = queue_context->timestamp_pool->acquire();
     timestamp_handle->setup_command_buffers(vtable);
     const auto& [head_cb, tail_cb] = timestamp_handle->command_buffers;
@@ -568,6 +595,7 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
                                  std::move(timestamp_handle));
 
     return VK_SUCCESS;
+    */
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL

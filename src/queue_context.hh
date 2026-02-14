@@ -10,7 +10,6 @@
 #include <chrono>
 #include <deque>
 #include <memory>
-#include <span>
 #include <unordered_set>
 
 namespace low_latency {
@@ -35,24 +34,26 @@ class QueueContext final : public Context {
     struct Submission {
         const std::unordered_set<VkSemaphore> signals;
         const std::unordered_set<VkSemaphore> waits;
-        const std::uint64_t target_semaphore_sequence;
-        const std::shared_ptr<TimestampPool::Handle> timestamp_handle;
+        const std::uint64_t sequence;
+
+        const std::shared_ptr<TimestampPool::Handle> start_handle;
+        const std::shared_ptr<TimestampPool::Handle> end_handle;
     };
     std::deque<std::shared_ptr<Submission>> submissions;
 
     // In flight frames!
     // These might come from different contexts.
     struct Frame {
-        const QueueContext& start_context;
-        const std::shared_ptr<TimestampPool::Handle> start;
-        const std::uint64_t target_start_sequence;
 
-        const QueueContext& end_context;
-        const std::shared_ptr<TimestampPool::Handle> end;
-        const std::uint64_t target_end_sequence;
+        struct Timepoint {
+            const QueueContext& context;
+            const std::shared_ptr<TimestampPool::Handle> handle;
+            const std::uint64_t sequence;
+        };
+
+        const Timepoint start;
+        const Timepoint end;
     };
-    // These can be null, it means we made presented without finding the
-    // timestamps associated with the present.
     std::deque<std::unique_ptr<Frame>> in_flight_frames;
 
   public:
@@ -61,12 +62,12 @@ class QueueContext final : public Context {
     virtual ~QueueContext();
 
   public:
-    void notify_submit(std::span<const VkSubmitInfo> infos,
-                       const std::uint64_t target_semaphore_sequence,
-                       std::shared_ptr<TimestampPool::Handle>&& handle);
-    void notify_submit(std::span<const VkSubmitInfo2> infos,
-                       const std::uint64_t target_semaphore_sequence,
-                       std::shared_ptr<TimestampPool::Handle>&& handle);
+    void
+    notify_submit(const VkSubmitInfo& info, const std::uint64_t& sequence,
+                  const std::shared_ptr<TimestampPool::Handle> head_handle,
+                  const std::shared_ptr<TimestampPool::Handle> tail_handle);
+
+    // TODO submit2
 
     void notify_present(const VkPresentInfoKHR& info);
 

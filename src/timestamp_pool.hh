@@ -40,6 +40,7 @@
 
 #include <memory>
 #include <unordered_set>
+#include <vector>
 
 namespace low_latency {
 
@@ -47,58 +48,62 @@ class QueueContext;
 
 class TimestampPool final {
   private:
-    static constexpr auto TIMESTAMP_QUERY_POOL_SIZE = 512u;
-    static_assert(TIMESTAMP_QUERY_POOL_SIZE % 2 == 0);
-
-  private:
     QueueContext& queue_context;
 
-    // VkQueryPool with an unordered set of keys available for reading.
-    using available_query_indicies_t = std::unordered_set<std::uint64_t>;
+    // A chunk of data which is useful for making timestamp queries.
+    // Allows association of an index to a query pool and command buffer.
+    // We reuse these when they're released.
+    struct QueryChunk final {
+      private:
+        using free_indices_t = std::unordered_set<std::uint64_t>;
+        static constexpr auto CHUNK_SIZE = 512u;
 
-    struct Block {
+      public:
         VkQueryPool query_pool;
-        std::unique_ptr<available_query_indicies_t> available_indicies;
+        std::unique_ptr<free_indices_t> free_indices;
         std::unique_ptr<std::vector<VkCommandBuffer>> command_buffers;
-    };
-    std::vector<Block> blocks; // multiple blocks
 
-    // A snapshot of all available blocks for reading after each poll.
-    std::vector<std::unique_ptr<std::vector<std::uint64_t>>> cached_timestamps;
+      public:
+        QueryChunk(const QueueContext& queue_context);
+        QueryChunk(const QueryChunk& handle) = delete;
+        QueryChunk(QueryChunk&&) = delete;
+        QueryChunk operator=(const QueryChunk& handle) = delete;
+        QueryChunk operator=(QueryChunk&&) = delete;
+        ~QueryChunk();
+    };
+    std::unordered_set<std::shared_ptr<QueryChunk>> query_chunks;
 
   public:
-    // A handle represents two std::uint64_t blocks oftimestamp memory and two
-    // command buffers.
+    // A handle represents a VkCommandBuffer and a query index.
+    // Once the Handle goes out of scope, the query index will be returned
+    // to the parent pool.
     struct Handle final {
       private:
         friend class TimestampPool;
 
       private:
-        available_query_indicies_t& index_origin;
-        const std::size_t block_index;
+        const std::weak_ptr<QueryChunk> origin_chunk;
 
       public:
         const VkQueryPool query_pool;
         const std::uint64_t query_index;
-        const std::array<VkCommandBuffer, 2> command_buffers;
+        const VkCommandBuffer command_buffer;
 
       public:
-        Handle(TimestampPool::available_query_indicies_t& index_origin,
-               const std::size_t block_index, const VkQueryPool& query_pool,
-               const std::uint64_t query_index,
-               const std::array<VkCommandBuffer, 2>& command_buffers);
+        Handle(const std::shared_ptr<QueryChunk>& origin_chunk,
+               const std::uint64_t& query_index);
         Handle(const Handle& handle) = delete;
         Handle(Handle&&) = delete;
         Handle operator=(const Handle& handle) = delete;
         Handle operator=(Handle&&) = delete;
-        ~Handle(); // frees from the pool
+        ~Handle();
 
       public:
-        void setup_command_buffers(const VkuDeviceDispatchTable& vtable) const;
-    };
+        void setup_command_buffers(const Handle& tail,
+                                   const QueueContext& queue_context) const;
 
-  private:
-    Block allocate();
+        std::optional<std::uint64_t> get_ticks(const TimestampPool& pool);
+    };
 
   public:
     TimestampPool(QueueContext& queue_context);
@@ -109,12 +114,8 @@ class TimestampPool final {
     ~TimestampPool();
 
   public:
-    // Hands out a Handle with a pool and index of two uint64_t's.
+    // Hands out a Handle!
     std::shared_ptr<Handle> acquire();
-
-    void poll(); // saves the current state for future get's.
-
-    std::uint64_t get_polled(const Handle& handle, const bool hack = false);
 };
 
 } // namespace low_latency

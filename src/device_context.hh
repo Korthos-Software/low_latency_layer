@@ -35,8 +35,11 @@ struct DeviceContext final : public Context {
     std::unordered_map<VkSwapchainKHR, index_semaphores_t> swapchain_signals;
 
     struct Clock {
+      public:
         using time_point_t = std::chrono::steady_clock::time_point;
+        const DeviceContext& device;
 
+      public:
         time_point_t cpu_time;
         std::uint64_t error_bound;
         std::uint64_t device_ticks;
@@ -45,7 +48,10 @@ struct DeviceContext final : public Context {
 
       public:
         Clock(const DeviceContext& device);
-        
+        ~Clock();
+
+      public:
+        void calibrate();
         time_point_t ticks_to_time(const std::uint64_t& ticks) const;
     };
     Clock clock;
@@ -61,9 +67,6 @@ struct DeviceContext final : public Context {
     void notify_acquire(const VkSwapchainKHR& swapchain,
                         const std::uint32_t& image_index,
                         const VkSemaphore& signal_semaphore);
-
-  public:
-    void calibrate_timestamps();
 };
 
 }; // namespace low_latency

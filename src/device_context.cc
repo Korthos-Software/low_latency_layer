@@ -31,50 +31,58 @@ void DeviceContext::notify_acquire(const VkSwapchainKHR& swapchain,
     it->second.insert_or_assign(image_index, signal_semaphore);
 }
 
-DeviceContext::Clock::Clock(const DeviceContext& context) {
+DeviceContext::Clock::Clock(const DeviceContext& context) : device(context) {
+    this->calibrate();
+}
 
+DeviceContext::Clock::~Clock() {}
+
+void DeviceContext::Clock::calibrate() {
     const auto infos = std::vector<VkCalibratedTimestampInfoKHR>{
         {VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT, nullptr,
          VK_TIME_DOMAIN_DEVICE_EXT},
         {VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT, nullptr,
          VK_TIME_DOMAIN_CLOCK_MONOTONIC_EXT}};
 
-    auto device_host = std::array<std::uint64_t, 2>{};
+    struct CalibratedResult {
+        std::uint64_t device;
+        std::uint64_t host;
+    };
+    auto calibrated_result = CalibratedResult{};
 
-    const auto steady_before = std::chrono::steady_clock::now();
-    context.vtable.GetCalibratedTimestampsKHR(
-        context.device, 2, std::data(infos), std::data(device_host),
-        &this->error_bound);
-    const auto steady_after = std::chrono::steady_clock::now();
-
-    this->cpu_time = steady_before + (steady_after - steady_before) / 2;
-    this->device_ticks = device_host[0];
-    this->host_ns = device_host[1];
-
-    // Might need to get physical limits again?
-    this->ticks_per_ns =
-        context.physical_device.properties->limits.timestampPeriod;
-}
-
-DeviceContext::Clock::time_point_t
-DeviceContext::Clock::ticks_to_time(const std::uint64_t& ticks) const {
+    // we probably want to use this instead bc clock_gettime isn't guaranteed
+    // by steady clock afaik
     /*
     struct timespec tv;
     clock_gettime(CLOCK_MONOTONIC, &tv);
     return tv.tv_nsec + tv.tv_sec*1000000000ull;
     */
+    const auto steady_before = std::chrono::steady_clock::now();
+    device.vtable.GetCalibratedTimestampsKHR(device.device, 2, std::data(infos),
+                                             &calibrated_result.device,
+                                             &this->error_bound);
+    const auto steady_after = std::chrono::steady_clock::now();
 
+    this->cpu_time = steady_before + (steady_after - steady_before) / 2;
+    this->device_ticks = calibrated_result.device;
+    this->host_ns = calibrated_result.host;
+
+    // Might need to get physical limits every now and then?
+    const auto& pd = device.physical_device.properties;
+    this->ticks_per_ns = pd->limits.timestampPeriod;
+}
+
+DeviceContext::Clock::time_point_t
+DeviceContext::Clock::ticks_to_time(const std::uint64_t& ticks) const {
     auto a = this->device_ticks;
     auto b = ticks;
-
     const auto was_before = a > b;
     if (was_before) { // it's happened before
         std::swap(a, b);
     }
+
     const auto nsec = std::chrono::nanoseconds((b - a) * this->ticks_per_ns);
     return this->cpu_time + (was_before ? -nsec : nsec);
 }
-
-void DeviceContext::calibrate_timestamps() { this->clock = Clock{*this}; }
 
 } // namespace low_latency
