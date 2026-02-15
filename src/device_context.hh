@@ -36,7 +36,8 @@ struct DeviceContext final : public Context {
 
     struct Clock {
       public:
-        using time_point_t = std::chrono::steady_clock::time_point;
+        using time_point_t = std::chrono::time_point<std::chrono::steady_clock,
+                                                     std::chrono::nanoseconds>;
         const DeviceContext& device;
 
       public:

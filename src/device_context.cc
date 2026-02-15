@@ -2,6 +2,7 @@
 #include "queue_context.hh"
 
 #include <utility>
+#include <iostream>
 
 namespace low_latency {
 
@@ -24,6 +25,9 @@ DeviceContext::~DeviceContext() {
 void DeviceContext::notify_acquire(const VkSwapchainKHR& swapchain,
                                    const std::uint32_t& image_index,
                                    const VkSemaphore& signal_semaphore) {
+    
+    std::cerr << "notify acquire for swapchain: " << swapchain << " : " << image_index << '\n';
+    std::cerr << "    signal semaphore: " << signal_semaphore << '\n';
 
     const auto it = this->swapchain_signals.try_emplace(swapchain).first;
 
@@ -57,6 +61,7 @@ void DeviceContext::Clock::calibrate() {
     clock_gettime(CLOCK_MONOTONIC, &tv);
     return tv.tv_nsec + tv.tv_sec*1000000000ull;
     */
+
     const auto steady_before = std::chrono::steady_clock::now();
     device.vtable.GetCalibratedTimestampsKHR(device.device, 2, std::data(infos),
                                              &calibrated_result.device,
