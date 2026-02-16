@@ -41,7 +41,10 @@ class QueueContext final : public Context {
         const std::shared_ptr<TimestampPool::Handle> start_handle;
         const std::shared_ptr<TimestampPool::Handle> end_handle;
 
+        std::uint64_t sequence;
+
         bool end_of_frame_marker = false;
+        std::string debug;
     };
     std::deque<std::shared_ptr<Submission>> submissions;
 
@@ -52,6 +55,7 @@ class QueueContext final : public Context {
         struct Timepoint {
             const QueueContext& context;
             const std::shared_ptr<TimestampPool::Handle> handle;
+            std::uint64_t sequence;
         };
 
         const Timepoint start;
@@ -60,13 +64,12 @@ class QueueContext final : public Context {
     std::deque<std::unique_ptr<Frame>> in_flight_frames;
 
     struct Timing {
-
         DeviceContext::Clock::time_point_t gpu_start;
         DeviceContext::Clock::time_point_t gpu_end;
 
-        // Distance between the last gpu_end and this one.
-        // So one entire go around, including all cpu and gpu.
-        DeviceContext::Clock::time_point_t::duration frametime;
+        DeviceContext::Clock::time_point_t::duration gpu_time;
+        
+        std::unique_ptr<Frame> frame;
     };
     std::deque<std::unique_ptr<Timing>> timings;
 
@@ -81,18 +84,20 @@ class QueueContext final : public Context {
   public:
     void
     notify_submit(const VkSubmitInfo& info,
+                  const std::uint64_t& sequence,
                   const std::shared_ptr<TimestampPool::Handle> head_handle,
                   const std::shared_ptr<TimestampPool::Handle> tail_handle);
 
     void
     notify_submit(const VkSubmitInfo2& info,
+                  const std::uint64_t& sequence,
                   const std::shared_ptr<TimestampPool::Handle> head_handle,
                   const std::shared_ptr<TimestampPool::Handle> tail_handle);
 
     void notify_present(const VkPresentInfoKHR& info);
 
   public:
-    std::optional<DeviceContext::Clock::time_point_t> get_sleep_until();
+    void sleep_in_present();
 };
 
 }; // namespace low_latency
