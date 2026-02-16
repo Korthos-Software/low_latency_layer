@@ -25,8 +25,6 @@ struct DeviceContext final : public Context {
 
     const VkDevice device;
     const VkuDeviceDispatchTable vtable;
-    // Do we need to use this unless we wrap dispatchable objects?
-    const PFN_vkSetDeviceLoaderData sdld;
 
     std::unordered_map<VkQueue, std::shared_ptr<QueueContext>> queues;
 
@@ -60,8 +58,7 @@ struct DeviceContext final : public Context {
   public:
     DeviceContext(InstanceContext& parent_instance,
                   PhysicalDeviceContext& parent_physical,
-                  const VkDevice& device, const PFN_vkSetDeviceLoaderData& sdld,
-                  VkuDeviceDispatchTable&& vtable);
+                  const VkDevice& device, VkuDeviceDispatchTable&& vtable);
     virtual ~DeviceContext();
 
   public:

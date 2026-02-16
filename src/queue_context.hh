@@ -67,6 +67,7 @@ class QueueContext final : public Context {
         DeviceContext::Clock::time_point_t gpu_start;
         DeviceContext::Clock::time_point_t gpu_end;
 
+        DeviceContext::Clock::time_point_t::duration cpu_time;
         DeviceContext::Clock::time_point_t::duration gpu_time;
         
         std::unique_ptr<Frame> frame;

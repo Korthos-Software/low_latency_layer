@@ -4,7 +4,6 @@
 #include <memory>
 #include <span>
 #include <string_view>
-#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -179,10 +178,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
-    const auto sdld = callback_info->u.pfnSetDeviceLoaderData;
     const auto gipa = create_info->u.pLayerInfo->pfnNextGetInstanceProcAddr;
     const auto gdpa = create_info->u.pLayerInfo->pfnNextGetDeviceProcAddr;
-    if (!sdld || !gipa || !gdpa) {
+    if (!gipa || !gdpa) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     create_info->u.pLayerInfo = create_info->u.pLayerInfo->pNext;
@@ -324,7 +322,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     layer_context.contexts.try_emplace(
         key,
         std::make_shared<DeviceContext>(instance_context, *physical_context,
-                                        *pDevice, sdld, std::move(vtable)));
+                                        *pDevice, std::move(vtable)));
 
     return VK_SUCCESS;
 }

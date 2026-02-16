@@ -1,18 +1,17 @@
 #include "device_context.hh"
 #include "queue_context.hh"
 
-#include <utility>
 #include <iostream>
+#include <utility>
 
 namespace low_latency {
 
 DeviceContext::DeviceContext(InstanceContext& parent_instance,
                              PhysicalDeviceContext& parent_physical_device,
                              const VkDevice& device,
-                             const PFN_vkSetDeviceLoaderData& sdld,
                              VkuDeviceDispatchTable&& vtable)
     : instance(parent_instance), physical_device(parent_physical_device),
-      device(device), sdld(sdld), vtable(std::move(vtable)), clock(*this) {}
+      device(device), vtable(std::move(vtable)), clock(*this) {}
 
 DeviceContext::~DeviceContext() {
     // We will let the destructor handle clearing here, but they should be
@@ -25,8 +24,9 @@ DeviceContext::~DeviceContext() {
 void DeviceContext::notify_acquire(const VkSwapchainKHR& swapchain,
                                    const std::uint32_t& image_index,
                                    const VkSemaphore& signal_semaphore) {
-    
-    std::cerr << "notify acquire for swapchain: " << swapchain << " : " << image_index << '\n';
+
+    std::cerr << "notify acquire for swapchain: " << swapchain << " : "
+              << image_index << '\n';
     std::cerr << "    signal semaphore: " << signal_semaphore << '\n';
 
     const auto it = this->swapchain_signals.try_emplace(swapchain).first;
