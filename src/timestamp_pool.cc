@@ -147,34 +147,6 @@ TimestampPool::Handle::get_ticks(const TimestampPool& pool) {
     return query_result.value;
 }
 
-/*
-void TimestampPool::poll() {
-    const auto& device_context = this->queue_context.device_context;
-
-    std::ranges::transform(
-        this->blocks, std::back_inserter(this->cached_timestamps),
-        [&, this](const auto& block) {
-            const auto& query_pool = block.query_pool;
-
-            auto timestamps = std::make_unique<std::vector<std::uint64_t>>(
-                this->TIMESTAMP_QUERY_POOL_SIZE);
-
-            const auto result = device_context.vtable.GetQueryPoolResults(
-                device_context.device, query_pool, 0,
-                this->TIMESTAMP_QUERY_POOL_SIZE,
-                this->TIMESTAMP_QUERY_POOL_SIZE * sizeof(std::uint64_t),
-                std::data(*timestamps), sizeof(uint64_t),
-                VK_QUERY_RESULT_64_BIT);
-
-            // Might return not ready when any of them aren't ready, which
-            // is not an error for our use case.
-            assert(result == VK_SUCCESS || result == VK_NOT_READY);
-
-            return timestamps;
-        });
-};
-*/
-
 TimestampPool::~TimestampPool() {
     const auto& device = this->queue_context.device_context.device;
     const auto& vtable = this->queue_context.device_context.vtable;

@@ -3,37 +3,13 @@
 
 // The purpose of this file is to provide the definition of a 'timestamp pool'.
 // It manages blocks of timestamp query pools, hands them out when requested,
-// and allocates more when (if) we run out. It also efficiently reads them back.
-// This class solves some key issues:
-//
-// 1. We need a potentially infinite amount of timestamps available to the
-// GPU. While I imagine most (good) applications will limit the amount of
-// times they call vkQueueSubmit, there's no bound we can place on the
-// amount of times this function will be called. Also,
-// the amount of frames in flight might vary, so really we need
-// num_queue_submits * max_frames_in_flight timestamps. Obviously, we don't
-// know what these numbers are at runtime and can't assume that they are
-// reasonable or even constant either. We solve this by allocating more
-// timestamps when necessary.
-
-// 2. We don't want to hammer vulkan with expensive timestamp read
-// operations. If we have hundreds of query pools lying around, reading them
-// back will take hundreds of individual vulkan calls. They
-// should be batched as to perform as few reads as possible. So if we allocate
-// multiple big query pool strips, then reading them will only require that many
-// calls. We then can cache off the result of reading as well so iterating
-// through later doesn't require any vulkan interaction at all.
-//
-//
+// and allocates more when (if) we run out.
 // Usage:
 //     1. Get handle with .acquire().
 //     2. Write start/end timestamp operations with the handle's pool and index
-//     into the provided command buffer.
-//     3. With the command buffer signalled completion via some semaphore /
-//     fence, call .poll(). This will cache off all outstanding handles.
-//     Retrieving with handles which have not been signalled are undefined.
-//     4. Retrieve timestamp results with .get_polled(your_handle).
-//     5. Destruct the handle to return the key to the pool.
+//     into the provided command buffer. Will return nullopt if they're
+//     not yet available.
+//     3. Destruct the handle to return the key to the pool.
 
 #include <vulkan/utility/vk_dispatch_table.h>
 #include <vulkan/vulkan.hpp>
