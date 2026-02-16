@@ -22,8 +22,6 @@ class QueueContext final : public Context {
     const VkQueue queue;
     const std::uint32_t queue_family_index;
 
-    // I used to use these to signal when we could read timestamps until
-    // I realised you could use hostQueryReset.
     std::uint64_t semaphore_sequence = 0;
     VkSemaphore semaphore;
 
@@ -64,11 +62,9 @@ class QueueContext final : public Context {
     std::deque<std::unique_ptr<Frame>> in_flight_frames;
 
     struct Timing {
-        DeviceContext::Clock::time_point_t gpu_start;
         DeviceContext::Clock::time_point_t gpu_end;
 
-        DeviceContext::Clock::time_point_t::duration cpu_time;
-        DeviceContext::Clock::time_point_t::duration gpu_time;
+        DeviceContext::Clock::time_point_t::duration gpu_time, cpu_time;
         
         std::unique_ptr<Frame> frame;
     };

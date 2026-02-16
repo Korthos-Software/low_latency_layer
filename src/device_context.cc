@@ -53,14 +53,6 @@ void DeviceContext::Clock::calibrate() {
     };
     auto calibrated_result = CalibratedResult{};
 
-    // we probably want to use this instead bc clock_gettime isn't guaranteed
-    // by steady clock afaik
-    /*
-    struct timespec tv;
-    clock_gettime(CLOCK_MONOTONIC, &tv);
-    return tv.tv_nsec + tv.tv_sec*1000000000ull;
-    */
-
     const auto steady_before = std::chrono::steady_clock::now();
     device.vtable.GetCalibratedTimestampsKHR(device.device, 2, std::data(infos),
                                              &calibrated_result.device,

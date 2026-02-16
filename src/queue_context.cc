@@ -319,14 +319,23 @@ void QueueContext::process_frames() {
 
         const auto frametime = *b - *a;
 
+        const auto cpu_time =
+            [&]() -> DeviceContext::Clock::time_point_t::duration {
+            const auto latest_iter = std::rbegin(this->timings);
+            if (latest_iter == std::rend(this->timings)) {
+                return DeviceContext::Clock::time_point_t::duration::zero();
+            }
+            return *a - (*latest_iter)->gpu_end;
+        }();
+
         std::cerr
             << "        calculated total time from last frame (frametime): ";
         debug_log_time(*b - *a);
 
         this->timings.emplace_back(std::make_unique<Timing>(
-            Timing{.gpu_start = *a,
-                   .gpu_end = *b,
+            Timing{.gpu_end = *b,
                    .gpu_time = frametime,
+                   .cpu_time = cpu_time,
                    .frame = std::move(this->in_flight_frames.front())}));
         this->in_flight_frames.pop_front();
     }
@@ -393,12 +402,25 @@ void QueueContext::sleep_in_present() {
         // return vect[0]->frametime;
         return vect[std::size(vect) / 2]->gpu_time;
     }();
+
+    const auto expected_cputime = [&, this]() {
+        auto vect = std::vector<Timing*>{};
+        std::ranges::transform(this->timings, std::back_inserter(vect),
+                               [](const auto& timing) { return timing.get(); });
+        std::ranges::sort(vect, [](const auto& a, const auto& b) {
+            return a->gpu_time < b->gpu_time;
+        });
+        // return vect[0]->frametime;
+        return vect[std::size(vect) / 2]->gpu_time;
+    }();
     std::cerr << "    expected gputime: ";
     debug_log_time(expected_gputime);
+    std::cerr << "    expected cputime: ";
+    debug_log_time(expected_cputime);
 
-    //                                                 PRESENT CALL
-    // |-------------------------|---------------------------|
-    // ^a                        ^swap_acquire               ^b
+    //                               PRESENT CALL
+    // |--------------|-------------------|----------------|
+    // a        swap_acquire              b                c
     //
     // Us, the CPU on the host, is approximately at 'b'.
     // We have a good guess for the distance between
@@ -432,7 +454,7 @@ void QueueContext::sleep_in_present() {
 
     const auto now = std::chrono::steady_clock::now();
     const auto dist = now - a;
-    const auto expected = expected_gputime - dist;
+    const auto expected = expected_gputime - dist - expected_cputime;
 
     const auto swi = VkSemaphoreWaitInfo{
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
@@ -440,7 +462,8 @@ void QueueContext::sleep_in_present() {
         .pSemaphores = &this->semaphore,
         .pValues = &frame->end.sequence,
     };
-    vtable.WaitSemaphoresKHR(device.device, &swi, std::max(expected.count(), 0l));
+    vtable.WaitSemaphoresKHR(device.device, &swi,
+                             std::max(expected.count(), 0l));
 
     /*
 

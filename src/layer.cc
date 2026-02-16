@@ -600,14 +600,6 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
         queue_context->notify_present(*present_info);
     }
 
-    const auto debug_log_time = [](const auto& diff) {
-        using namespace std::chrono;
-        const auto ms = duration_cast<milliseconds>(diff);
-        const auto us = duration_cast<microseconds>(diff - ms);
-        const auto ns = duration_cast<nanoseconds>(diff - ms - us);
-        std::cerr << ms << " " << us << " " << ns << "\n";
-    };
-
     queue_context->sleep_in_present();
 
     return VK_SUCCESS;
