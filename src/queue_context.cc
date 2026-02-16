@@ -408,7 +408,7 @@ void QueueContext::sleep_in_present() {
         std::ranges::transform(this->timings, std::back_inserter(vect),
                                [](const auto& timing) { return timing.get(); });
         std::ranges::sort(vect, [](const auto& a, const auto& b) {
-            return a->gpu_time < b->gpu_time;
+            return a->cpu_time < b->cpu_time;
         });
         // return vect[0]->frametime;
         return vect[std::size(vect) / 2]->cpu_time;
