@@ -411,7 +411,7 @@ void QueueContext::sleep_in_present() {
             return a->gpu_time < b->gpu_time;
         });
         // return vect[0]->frametime;
-        return vect[std::size(vect) / 2]->gpu_time;
+        return vect[std::size(vect) / 2]->cpu_time;
     }();
     std::cerr << "    expected gputime: ";
     debug_log_time(expected_gputime);
@@ -422,9 +422,9 @@ void QueueContext::sleep_in_present() {
     // |--------------|-------------------|----------------|
     // a        swap_acquire              b                c
     //
-    // Us, the CPU on the host, is approximately at 'b'.
-    // We have a good guess for the distance between
-    // a and b (median gputime). The GPU is at any point on this line.
+    // Us, the CPU on the host, is approximately at 'b'. We have a good guess
+    // for the distance between a and b as gputime. Our educated guess for the
+    // distance between b and c is cputime. The GPU is between a and b.
 
     const auto& frame = this->in_flight_frames.back();
 
