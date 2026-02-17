@@ -6,6 +6,7 @@
 #include <chrono>
 #include <iostream>
 #include <limits>
+#include <ranges>
 #include <span>
 
 namespace low_latency {
@@ -141,119 +142,41 @@ void QueueContext::notify_submit(
 
 void QueueContext::notify_present(const VkPresentInfoKHR& info) {
 
-    const auto waits = [&]() {
-        auto waits = std::unordered_set<VkSemaphore>{};
-        std::ranges::copy_n(info.pWaitSemaphores, info.waitSemaphoreCount,
-                            std::inserter(waits, std::end(waits)));
-        return waits;
-    }();
+    // We are going to assume that all queue submissions before and on the same
+    // queue contribute to the frame.
 
-    const auto collected_semaphores = [&info, this]() {
-        auto collected_semaphores = std::unordered_set<VkSemaphore>{};
-        for (auto i = std::uint32_t{0}; i < info.swapchainCount; ++i) {
-            const auto& swapchain = info.pSwapchains[i];
-            const auto& index = info.pImageIndices[i];
+    // This used to be more complicated where we found the first submission that
+    // was signalled by acquire, then we walked forwards until we found the
+    // submission before it that marked the end of frame (which was the last
+    // submission in the previous frame that called notify submit). This seemed
+    // completely redundant, in all cases it was exactly what we have here. But
+    // I could be wrong.
 
-            // Shouldn't be possible to present to a swapchain that wasn't
-            // waited in
-
-            const auto& signals = this->device_context.swapchain_signals;
-            const auto swapchain_it = signals.find(swapchain);
-            assert(swapchain_it != std::end(signals));
-            const auto index_it = swapchain_it->second.find(index);
-            assert(index_it != std::end(swapchain_it->second));
-
-            const auto& semaphore = index_it->second;
-            collected_semaphores.emplace(index_it->second);
-        }
-        return collected_semaphores;
-    }();
-
-    const auto acquire_iter = std::ranges::find_if(
-        std::rbegin(this->submissions), std::rend(this->submissions),
-        [&](const auto& submission) {
-            return std::ranges::any_of(
-                submission->waits, [&](const auto& wait) {
-                    return collected_semaphores.contains(wait);
-                });
-        });
-
-    if (acquire_iter == std::rend(this->submissions)) {
-        std::cerr << "couldn't find starting submission!\n";
+    // that wa
+    const auto start_iter = std::begin(this->submissions);
+    // no op submit?
+    if (start_iter == std::end(this->submissions)) {
+        std::cerr << "ignored no op submit\n";
         return;
     }
-    const auto& acquire = *acquire_iter;
-    (*acquire_iter)->debug += "acquire ";
+    const auto last_iter = std::prev(std::end(this->submissions));
 
-    const auto present_iter = std::ranges::find_if(
-        std::rbegin(this->submissions), std::rend(this->submissions),
-        [&](const auto& submission) {
-            return std::ranges::any_of(
-                submission->signals, [&](const auto& signal) {
-                    if (waits.contains(signal)) {
-                        std::cerr
-                            << "queue with signal matching present iter found: "
-                            << signal << '\n';
-                    }
+    (*start_iter)->debug += "first_during_present ";
+    (*last_iter)->debug += "last_during_present ";
 
-                    return waits.contains(signal);
-                });
-        });
+    // TODO We probably want to walk through other graphics queues and get
+    // the time that they submitted at some stage. Somewhat difficult to do,
+    // we probably need to create a graph of dependencies but it seems like
+    // overengineering. I will just get this working well before I deal
+    // with complicated edge cases.
 
-    if (present_iter == std::rend(this->submissions)) {
-        std::cerr << "couldn't find ending submission!\n";
-        return;
-    }
-    (*present_iter)->debug += "present ";
-    const auto& end = *present_iter;
-
-    std::cerr << "present for queue: " << queue << ", our waits:\n";
-    for (const auto& wait : waits) {
-        std::cerr << "      " << wait << '\n';
-    }
-
-    // The work including and between acquire -> present is effectively
-    // guaranteed to contribute to our frame. We are going to mark this point
-    // for future queues to read the 'start of frame' from.
-    (*present_iter)->end_of_frame_marker = true;
-
-    // Now we read backwards to try to find our true start, starting at our
-    // acquire.
-    const auto after_previous_present_iter = std::prev(std::ranges::find_if(
-        std::next(acquire_iter), std::rend(this->submissions),
-        [](const auto& submission) {
-            return submission->end_of_frame_marker;
-        }));
-
-    (*after_previous_present_iter)->debug += "after_previous_present ";
-
-    this->submissions.back()->debug += "last_in_host_present ";
-
-    std::cerr << "the present iter was dist from back of: "
-              << std::distance(std::rbegin(this->submissions), present_iter)
-              << '\n';
-    std::cerr << "the acquire iter was dist from back of: "
-              << std::distance(std::rbegin(this->submissions), acquire_iter)
-              << '\n';
-    std::cerr << "the before_previous_present iter was dist from back of: "
-              << std::distance(std::rbegin(this->submissions),
-                               after_previous_present_iter)
-              << '\n';
-
-    auto frame =
-        Frame{.start =
-                  Frame::Timepoint{
-                      .context = *this,
-                      .handle = (*after_previous_present_iter)->start_handle,
-                      .sequence = (*after_previous_present_iter)->sequence,
-                  },
-              .end = Frame::Timepoint{
-                  .context = *this,
-                  .handle = (*present_iter)->end_handle,
-                  .sequence = (*present_iter)->sequence,
-              }};
-    this->in_flight_frames.emplace_back(
-        std::make_unique<Frame>(std::move(frame)));
+    this->in_flight_frames.emplace_back(Frame{
+        .submissions = std::move(this->submissions),
+        .sequence = (*last_iter)->sequence,
+    });
+    assert(std::size(this->in_flight_frames.back().submissions));
+    // *valid but unspecified state after move, so clear!*
+    this->submissions.clear();
 }
 
 const auto debug_log_time = [](const auto& diff) {
@@ -269,74 +192,106 @@ void QueueContext::process_frames() {
         return;
     }
 
-    // Collect all devices and call calibrate.
-    [this]() -> void {
-        using context_ref_t = std::reference_wrapper<DeviceContext>;
-        auto target_devices = std::unordered_map<VkDevice, context_ref_t>{};
-        for (const auto& frame : this->in_flight_frames) {
-            auto& start = frame->start.context.device_context;
-            auto& end = frame->end.context.device_context;
+    // We used to collect all devices that were pointed to by all potential
+    // submissions, put them in a set and then call.calibrate() on each once.
+    // This is unnecessary now - we can assume all submissions come from the
+    // same queue (this one!).
+    auto& device_context = this->device_context;
+    auto& clock = device_context.clock;
+    clock.calibrate();
 
-            target_devices.try_emplace(start.device, std::ref(start));
-            target_devices.try_emplace(end.device, std::ref(end));
-        }
-        for (const auto& pair : target_devices) {
-            auto& device = pair.second.get();
-            device.clock.calibrate();
-        }
+    // Get the queue's sequence number so we can quickly check
+    // frames are finished without calling getCalibratedTimestamps.
+    // This is somewhat a premature optimization but it's elegant.
+    const auto seq = [&, this]() -> auto {
+        auto seq = std::uint64_t{0};
+        device_context.vtable.GetSemaphoreCounterValueKHR(
+            device_context.device, this->semaphore, &seq);
+        return seq;
     }();
 
-    const auto get_tick_time = [](const auto& timepoint)
-        -> std::optional<DeviceContext::Clock::time_point_t> {
-        const auto& handle = timepoint.handle;
-        const auto& context = timepoint.context;
-
-        const auto ticks = handle->get_ticks(*context.timestamp_pool);
-        if (!ticks.has_value()) {
-            return std::nullopt;
-        }
-        const auto& clock = context.device_context.clock;
-        return clock.ticks_to_time(*ticks);
-    };
-
-    std::cerr << "starting frame readout\n";
     while (std::size(this->in_flight_frames)) {
         const auto& frame = this->in_flight_frames.front();
-        assert(frame);
 
-        const auto a = get_tick_time(frame->start);
-        if (!a.has_value()) {
+        // There should be at least one submission, we guarantee it in
+        // notify_present.
+        assert(std::size(frame.submissions));
+
+        const auto& last_submission = frame.submissions.back();
+
+        // Not completed (so future frames definitely aren't) - stop early.
+        if (seq < last_submission->sequence) {
             break;
         }
 
-        const auto b = get_tick_time(frame->end);
-        if (!b.has_value()) {
-            break;
-        }
+        // We are committed to removing the frame at this stage and
+        // promoting it to a 'timing' struct because it's completed.
+        // We can guarantee that we can extract timing information from
+        // all start/end handles now.
 
-        // We are committed to removing the frame at this stage and promoting it
-        // to a 'timing' struct because it's completed..
+        // Using leetcode merge intervals in the wild lol
+        struct Interval {
+            DeviceContext::Clock::time_point_t start, end;
+        };
 
-        const auto frametime = *b - *a;
+        const auto sorted_intervals = [&, this]() -> auto {
+            auto intervals = std::vector<Interval>{};
+            std::ranges::transform(
+                frame.submissions, std::back_inserter(intervals),
+                [&, this](const auto& submission) {
+                    const auto get_time = [&, this](const auto& handle) {
+                        const auto t = handle->get_ticks(*this->timestamp_pool);
+                        assert(t.has_value()); // guaranteed from seq.
+                        return clock.ticks_to_time(*t);
+                    };
 
-        const auto cpu_time =
-            [&]() -> DeviceContext::Clock::time_point_t::duration {
-            const auto latest_iter = std::rbegin(this->timings);
-            if (latest_iter == std::rend(this->timings)) {
-                return DeviceContext::Clock::time_point_t::duration::zero();
-            }
-            return *a - (*latest_iter)->gpu_end;
+                    return Interval{
+                        .start = get_time(submission->start_handle),
+                        .end = get_time(submission->end_handle),
+                    };
+                });
+
+            std::ranges::sort(intervals, [](const auto& a, const auto& b) {
+                return a.start < b.start;
+            });
+            return intervals;
         }();
 
-        std::cerr
-            << "        calculated total time from last frame (frametime): ";
-        debug_log_time(*b - *a);
+        const auto merged = [&]() -> auto {
+            auto merged = std::vector<Interval>{};
+            auto last = sorted_intervals[0];
 
-        this->timings.emplace_back(std::make_unique<Timing>(
-            Timing{.gpu_end = *b,
-                   .gpu_time = frametime,
-                   .cpu_time = cpu_time,
-                   .frame = std::move(this->in_flight_frames.front())}));
+            for (const auto& [s, e] : sorted_intervals | std::views::drop(1)) {
+                if (s <= last.end) {
+                    last.end = std::max(last.end, e);
+                } else {
+                    merged.push_back(last);
+                    last = {s, e};
+                }
+            }
+            merged.push_back(last);
+            return merged;
+        }();
+
+        const auto gputime = std::ranges::fold_left(
+            merged, DeviceContext::Clock::time_point_t::duration{},
+            [](auto gputime, const auto& interval) {
+                const auto& [start, end] = interval;
+                return gputime + (end - start);
+            });
+
+        const auto start = merged.front().start;
+        const auto end = merged.back().end;
+        const auto not_gputime =
+            (merged.back().end - merged.front().start) - gputime;
+
+        auto timing = Timing{
+            .gputime = gputime,
+            .not_gputime = not_gputime,
+            .frame = frame,
+        };
+        this->timings.emplace_back(std::make_unique<Timing>(timing));
+
         this->in_flight_frames.pop_front();
     }
 
@@ -355,22 +310,23 @@ void QueueContext::sleep_in_present() {
     const auto& vtable = device.vtable;
 
     // Call this to push all in flight frames into our timings structure,
-    // but only if they're completed. So now they are truly *in flight frames*.
+    // but only if they're completed. So now they are truly *in flight
+    // frames*.
     this->process_frames();
 
     if (const auto F = std::size(this->in_flight_frames); F > 1) {
-        // In this case, we are so far ahead that there are multiple frames in
-        // flight. Either that, or our bookkeeping has gone horribly wrong! Wait
-        // on the 2nd last frame in flight to complete. This shunts us to F=1.
+        // In this case, we are so far ahead that there are multiple frames
+        // in flight. Either that, or our bookkeeping has gone horribly
+        // wrong! Wait on the 2nd last frame in flight to complete. This
+        // shunts us to F=1.
         const auto second_iter = std::next(std::rbegin(this->in_flight_frames));
         assert(second_iter != std::rend(this->in_flight_frames));
 
-        const auto& frame = (*second_iter)->end.sequence;
         const auto swi = VkSemaphoreWaitInfo{
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
             .semaphoreCount = 1,
             .pSemaphores = &this->semaphore,
-            .pValues = &(*second_iter)->end.sequence,
+            .pValues = &second_iter->sequence,
         };
         vtable.WaitSemaphoresKHR(device.device, &swi,
                                  std::numeric_limits<std::uint64_t>::max());
@@ -382,6 +338,8 @@ void QueueContext::sleep_in_present() {
         return;
     }
 
+    // We are checking size again because process_frames might have drained
+    // it to zero.
     if (!std::size(this->in_flight_frames)) {
         return;
     }
@@ -397,34 +355,34 @@ void QueueContext::sleep_in_present() {
         std::ranges::transform(this->timings, std::back_inserter(vect),
                                [](const auto& timing) { return timing.get(); });
         std::ranges::sort(vect, [](const auto& a, const auto& b) {
-            return a->gpu_time < b->gpu_time;
+            return a->gputime < b->gputime;
         });
         // return vect[0]->frametime;
-        return vect[std::size(vect) / 2]->gpu_time;
+        return vect[std::size(vect) / 2]->gputime;
     }();
 
-    const auto expected_cputime = [&, this]() {
+    const auto expected_not_gputime = [&, this]() {
         auto vect = std::vector<Timing*>{};
         std::ranges::transform(this->timings, std::back_inserter(vect),
                                [](const auto& timing) { return timing.get(); });
         std::ranges::sort(vect, [](const auto& a, const auto& b) {
-            return a->cpu_time < b->cpu_time;
+            return a->not_gputime < b->not_gputime;
         });
         // return vect[0]->frametime;
-        return vect[std::size(vect) / 2]->cpu_time;
+        return vect[std::size(vect) / 2]->not_gputime;
     }();
+
     std::cerr << "    expected gputime: ";
     debug_log_time(expected_gputime);
-    std::cerr << "    expected cputime: ";
-    debug_log_time(expected_cputime);
+    std::cerr << "    expected not_gputime: ";
+    debug_log_time(expected_not_gputime);
 
     //                               PRESENT CALL
-    // |--------------|-------------------|----------------|
-    // a        swap_acquire              b                c
+    // |----------------------------------|----------------|
+    // first                              b                c
     //
-    // Us, the CPU on the host, is approximately at 'b'. We have a good guess
-    // for the distance between a and b as gputime. Our educated guess for the
-    // distance between b and c is cputime. The GPU is between a and b.
+    // Us, the CPU on the host, is approximately at 'b'. We have a good
+    // guess for the distance between a and b as gputime.
 
     const auto& frame = this->in_flight_frames.back();
 
@@ -432,137 +390,49 @@ void QueueContext::sleep_in_present() {
     // It's impossible to make a decision until we know a.
     // Doing this is fine because it won't affect throughput at all.
     // (ie, there's more work queued after regardless).
+    // FIXME: If a == b, then we're waiting for the entire queue
+    // to finish because the semaphore only says if it has finished.
+    // The fix is to check the start timestamp instead of the query
+    // in the case that it's...
+    // Honestly it might be better to signal two semaphores because
+    // we need to wait for when the submission starts work and
+    // right now, we only signal when the submission finishes work.
+    // Ideally we have both, so we can elegantly wait on the start
+    // semaphore of A, then get A's start timestamp. This is BROKEN.
+
     [&]() -> void {
         const auto swi = VkSemaphoreWaitInfo{
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
             .semaphoreCount = 1,
             .pSemaphores = &this->semaphore,
-            .pValues = &frame->start.sequence,
+            .pValues = &frame.submissions.front()->sequence,
         };
         vtable.WaitSemaphoresKHR(device.device, &swi,
                                  std::numeric_limits<std::uint64_t>::max());
     }();
 
-    // We now know that A is available because its semaphore has been signalled.
-    const auto a_handle = frame->start.handle;
-    const auto& a_context = frame->start.context;
+    // We now know that A is available because its semaphore has been
+    // signalled.
 
-    const auto a_ticks_opt = a_handle->get_ticks(*a_context.timestamp_pool);
-    assert(a_ticks_opt.has_value());
-    const auto& a_clock = a_context.device_context.clock;
-    const auto a = a_clock.ticks_to_time(*a_ticks_opt);
+    const auto a = [&, this]() {
+        const auto& handle = frame.submissions.front()->start_handle;
+        const auto ticks = handle->get_ticks(*this->timestamp_pool);
+        assert(ticks.has_value());
+        return device_context.clock.ticks_to_time(*ticks);
+    }();
 
     const auto now = std::chrono::steady_clock::now();
     const auto dist = now - a;
-    const auto expected = expected_gputime - dist - expected_cputime;
+    const auto expected = expected_gputime - dist;
 
     const auto swi = VkSemaphoreWaitInfo{
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
         .semaphoreCount = 1,
         .pSemaphores = &this->semaphore,
-        .pValues = &frame->end.sequence,
+        .pValues = &frame.sequence,
     };
     vtable.WaitSemaphoresKHR(device.device, &swi,
                              std::max(expected.count(), 0l));
-
-    /*
-
-        // 2% of average gpu time for dealing with variance.
-        // This could be calculated more precisely with the
-        // numbers we have (like we could construct a high% confidence
-        // interval? not big on maths).
-        const auto slack = gputime / 50;
-
-        // All educated guesses:
-        //  dist_to_b = gputime - dist_to_last_b;
-        //  dist_to_last_b = now - last_b
-        //  sleep_until = now + extra_delay + slack + dist_to_b
-        //              = now + extra_delay + slack + (frametime -
-       dist_to_last_b)
-        //              = now + extra_delay + slack + frametime - (now - last_b)
-
-        const auto now = std::chrono::steady_clock::now();
-        assert(last_b <= now);
-        const auto dist = now - last_b;
-        // Even if this is negative, it's a no-op to sleep backwards.
-        const auto sleep_target =
-            now + extra_delay + slack + median_frametime - dist;
-            */
-
-    /*
-    std::cerr << " SLEEPING FOR: ";
-    debug_log_time(sleep_target - now);
-    std::this_thread::sleep_until(sleep_target);
-    */
-
-    /*
-    const auto get_tick_time = [](const auto& timepoint)
-        -> std::optional<DeviceContext::Clock::time_point_t> {
-        const auto& handle = timepoint.handle;
-        const auto& context = timepoint.context;
-
-        const auto ticks = handle->get_ticks(*context.timestamp_pool);
-        if (!ticks.has_value()) {
-            return std::nullopt;
-        }
-        const auto& clock = context.device_context.clock;
-        return clock.ticks_to_time(*ticks);
-    };
-
-    const auto finished_time =
-        get_tick_time(this->in_flight_frames.back()->end);
-    const auto after = std::chrono::steady_clock::now();
-    if (!finished_time.has_value()) {
-        std::cerr << "didnt finish late!\n";
-    } else {
-        std::cerr << "finished late by: ";
-        const auto late_time = after - *finished_time;
-    }
-
-    const auto get_tick_time2 = [this](const auto& handle)
-        -> std::optional<DeviceContext::Clock::time_point_t> {
-        const auto& context = *this;
-
-        const auto ticks = handle->get_ticks(*context.timestamp_pool);
-        if (!ticks.has_value()) {
-            return std::nullopt;
-        }
-        const auto& clock = context.device_context.clock;
-        return clock.ticks_to_time(*ticks);
-    };
-
-    this->submissions.back()->debug += " last_in_wait";
-
-    std::cerr << "---------------SUBMISSION READOUT POST FRAME SUBMIT AND "
-                 "WAIT--------------------\n";
-    auto i = std::size_t{0};
-    for (auto it = std::rbegin(this->submissions);
-         i < 20 && it != std::rend(this->submissions); ++it, ++i) {
-
-        std::cerr << "    submission -" << i << '\n';
-        const auto& submission = **it;
-
-        std::cerr << "        sequence target: " << submission.sequence << '\n';
-
-        std::cerr << "        debug tags: " << submission.debug << '\n';
-
-        const auto end_time = get_tick_time2(submission.end_handle);
-        std::cerr << "        end_time: ";
-        if (end_time.has_value()) {
-            debug_log_time(after - *end_time);
-        } else {
-            std::cerr << "not finished yet!\n";
-        }
-
-        const auto start_time = get_tick_time2(submission.start_handle);
-        std::cerr << "        start_time: ";
-        if (start_time.has_value()) {
-            debug_log_time(after - *start_time);
-        } else {
-            std::cerr << "not finished yet!\n";
-        }
-    }
-    */
 }
 
 } // namespace low_latency

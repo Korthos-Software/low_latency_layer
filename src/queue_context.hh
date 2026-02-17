@@ -31,7 +31,8 @@ class QueueContext final : public Context {
 
   private:
     static constexpr auto MAX_TRACKED_TIMINGS = 50;
-    // Potentially in flight queue submissions
+
+    // Potentially in flight queue submissions that come from this queue.
     struct Submission {
         const std::unordered_set<VkSemaphore> signals;
         const std::unordered_set<VkSemaphore> waits;
@@ -41,32 +42,26 @@ class QueueContext final : public Context {
 
         std::uint64_t sequence;
 
-        bool end_of_frame_marker = false;
         std::string debug;
     };
-    std::deque<std::shared_ptr<Submission>> submissions;
+    using submission_ptr_t = std::shared_ptr<Submission>;
+    std::deque<submission_ptr_t> submissions;
 
-    // In flight frames!
-    // These might come from different contexts.
+    // In flight frame submissions grouped together.
+    // The first element in the vector refers to the first submission that
+    // contributed to that frame. The last element is the last submission before
+    // present was called.
     struct Frame {
-
-        struct Timepoint {
-            const QueueContext& context;
-            const std::shared_ptr<TimestampPool::Handle> handle;
-            std::uint64_t sequence;
-        };
-
-        const Timepoint start;
-        const Timepoint end;
+        std::deque<submission_ptr_t> submissions;
+        std::uint64_t sequence;
     };
-    std::deque<std::unique_ptr<Frame>> in_flight_frames;
+    std::deque<Frame> in_flight_frames;
 
+    // Completed frames.
     struct Timing {
-        DeviceContext::Clock::time_point_t gpu_end;
+        DeviceContext::Clock::time_point_t::duration gputime, not_gputime;
 
-        DeviceContext::Clock::time_point_t::duration gpu_time, cpu_time;
-        
-        std::unique_ptr<Frame> frame;
+        Frame frame;
     };
     std::deque<std::unique_ptr<Timing>> timings;
 
@@ -80,14 +75,12 @@ class QueueContext final : public Context {
 
   public:
     void
-    notify_submit(const VkSubmitInfo& info,
-                  const std::uint64_t& sequence,
+    notify_submit(const VkSubmitInfo& info, const std::uint64_t& sequence,
                   const std::shared_ptr<TimestampPool::Handle> head_handle,
                   const std::shared_ptr<TimestampPool::Handle> tail_handle);
 
     void
-    notify_submit(const VkSubmitInfo2& info,
-                  const std::uint64_t& sequence,
+    notify_submit(const VkSubmitInfo2& info, const std::uint64_t& sequence,
                   const std::shared_ptr<TimestampPool::Handle> head_handle,
                   const std::shared_ptr<TimestampPool::Handle> tail_handle);
 
