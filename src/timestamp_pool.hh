@@ -18,6 +18,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "device_context.hh"
+
 namespace low_latency {
 
 class QueueContext;
@@ -58,6 +60,7 @@ class TimestampPool final {
         friend class TimestampPool;
 
       private:
+        const TimestampPool& timestamp_pool;
         const std::weak_ptr<QueryChunk> origin_chunk;
 
       public:
@@ -66,7 +69,8 @@ class TimestampPool final {
         const VkCommandBuffer command_buffer;
 
       public:
-        Handle(const std::shared_ptr<QueryChunk>& origin_chunk,
+        Handle(const TimestampPool& timestamp_pool,
+               const std::shared_ptr<QueryChunk>& origin_chunk,
                const std::uint64_t& query_index);
         Handle(const Handle& handle) = delete;
         Handle(Handle&&) = delete;
@@ -78,7 +82,7 @@ class TimestampPool final {
         void setup_command_buffers(const Handle& tail,
                                    const QueueContext& queue_context) const;
 
-        std::optional<std::uint64_t> get_ticks(const TimestampPool& pool);
+        DeviceContext::Clock::time_point_t get_time();
     };
 
   public:

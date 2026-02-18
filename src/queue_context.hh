@@ -48,10 +48,12 @@ class QueueContext final : public Context {
     std::deque<submission_ptr_t> submissions;
 
     // In flight frame submissions grouped together.
-    // The first element in the vector refers to the first submission that
+    // The first element in the deque refers to the first submission that
     // contributed to that frame. The last element is the last submission before
     // present was called.
+    // std::size(submissions) >= 1 btw
     struct Frame {
+        submission_ptr_t prev_frame_last_submit;
         std::deque<submission_ptr_t> submissions;
         std::uint64_t sequence;
     };

@@ -76,18 +76,19 @@ std::shared_ptr<TimestampPool::Handle> TimestampPool::acquire() {
     const auto query_index = *std::begin(indices);
     assert(indices.erase(query_index));
 
-    return std::make_shared<Handle>(*not_empty_iter, query_index);
+    return std::make_shared<Handle>(*this, *not_empty_iter, query_index);
 }
 
-TimestampPool::Handle::Handle(const std::shared_ptr<QueryChunk>& origin_chunk,
+TimestampPool::Handle::Handle(const TimestampPool& timestamp_pool,
+                              const std::shared_ptr<QueryChunk>& origin_chunk,
                               const std::uint64_t& query_index)
-    : query_pool(origin_chunk->query_pool), query_index(query_index),
-      origin_chunk(origin_chunk),
+    : timestamp_pool(timestamp_pool), query_pool(origin_chunk->query_pool),
+      query_index(query_index), origin_chunk(origin_chunk),
       command_buffer((*origin_chunk->command_buffers)[query_index]) {}
 
 TimestampPool::Handle::~Handle() {
-    // Parent destructing shouldn't mean we should have a bunch of insertions
-    // for zero reason.
+    // Parent destructing shouldn't mean we should have a bunch of
+    // insertions for zero reason.
     if (const auto ptr = this->origin_chunk.lock(); ptr) {
         assert(ptr->free_indices->insert(this->query_index).second);
     }
@@ -122,29 +123,35 @@ void TimestampPool::Handle::setup_command_buffers(
     vtable.EndCommandBuffer(tail.command_buffer);
 }
 
-std::optional<std::uint64_t>
-TimestampPool::Handle::get_ticks(const TimestampPool& pool) {
+DeviceContext::Clock::time_point_t TimestampPool::Handle::get_time() {
+    const auto& device_ctx = this->timestamp_pool.queue_context.device_context;
+    const auto& vtable = device_ctx.vtable;
 
-    const auto& device_context = pool.queue_context.device_context;
-    const auto& vtable = device_context.vtable;
-
+    // For debug builds, we're going to query the availability bit so we can
+    // assert that after the semaphore has flagged it as naturally available.
     struct QueryResult {
         std::uint64_t value;
+#ifndef NDEBUG
         std::uint64_t available;
+#endif
     };
     auto query_result = QueryResult{};
 
+    constexpr auto query_flags = []() -> auto {
+        auto flag = VkQueryResultFlags{VK_QUERY_RESULT_64_BIT};
+#ifndef NDEBUG
+        flag |= VK_QUERY_RESULT_WITH_AVAILABILITY_BIT;
+#endif
+        return flag;
+    }();
+
     const auto r = vtable.GetQueryPoolResults(
-        device_context.device, query_pool, this->query_index, 1,
-        sizeof(query_result), &query_result, sizeof(query_result),
-        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+        device_ctx.device, query_pool, this->query_index, 1,
+        sizeof(query_result), &query_result, sizeof(query_result), query_flags);
 
-    assert(r == VK_SUCCESS || r == VK_NOT_READY);
+    assert(r == VK_SUCCESS && query_result.available);
 
-    if (!query_result.available) {
-        return std::nullopt;
-    }
-    return query_result.value;
+    return device_ctx.clock.ticks_to_time(query_result.value);
 }
 
 TimestampPool::~TimestampPool() {

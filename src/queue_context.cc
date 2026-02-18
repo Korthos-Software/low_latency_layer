@@ -152,7 +152,6 @@ void QueueContext::notify_present(const VkPresentInfoKHR& info) {
     // completely redundant, in all cases it was exactly what we have here. But
     // I could be wrong.
 
-    // that wa
     const auto start_iter = std::begin(this->submissions);
     // no op submit?
     if (start_iter == std::end(this->submissions)) {
@@ -164,13 +163,31 @@ void QueueContext::notify_present(const VkPresentInfoKHR& info) {
     (*start_iter)->debug += "first_during_present ";
     (*last_iter)->debug += "last_during_present ";
 
-    // TODO We probably want to walk through other graphics queues and get
-    // the time that they submitted at some stage. Somewhat difficult to do,
-    // we probably need to create a graph of dependencies but it seems like
-    // overengineering. I will just get this working well before I deal
-    // with complicated edge cases.
+    // The last submission is either in flight, already processed, or we
+    // just happen to be the first frame and we can just set it to our start
+    // with little conseuqence.
+    const auto prev_frame_last_submit = [&]() -> auto {
+        if (const auto iter = std::rbegin(this->in_flight_frames);
+            iter != std::rend(this->in_flight_frames)) {
+
+            assert(!iter->submissions.empty());
+            return iter->submissions.back();
+        }
+
+        if (const auto iter = std::rbegin(this->timings);
+            iter != std::rend(this->timings)) {
+
+            const auto& submissions = (*iter)->frame.submissions;
+            assert(!submissions.empty());
+
+            return submissions.back();
+        }
+
+        return *start_iter;
+    }();
 
     this->in_flight_frames.emplace_back(Frame{
+        .prev_frame_last_submit = prev_frame_last_submit,
         .submissions = std::move(this->submissions),
         .sequence = (*last_iter)->sequence,
     });
@@ -240,9 +257,7 @@ void QueueContext::process_frames() {
                 frame.submissions, std::back_inserter(intervals),
                 [&, this](const auto& submission) {
                     const auto get_time = [&, this](const auto& handle) {
-                        const auto t = handle->get_ticks(*this->timestamp_pool);
-                        assert(t.has_value()); // guaranteed from seq.
-                        return clock.ticks_to_time(*t);
+                        return handle->get_time();
                     };
 
                     return Interval{
@@ -280,10 +295,15 @@ void QueueContext::process_frames() {
                 return gputime + (end - start);
             });
 
-        const auto start = merged.front().start;
+        // The start should be the previous frame's last submission, NOT when we
+        // start here. Otherwise, we won't account for the time between the
+        // previous frame's last submission and our first submission, which
+        // could genuinely be a large period of time. So look for it in timings,
+        // because it's guaranteed to be there at this stage. Either that, or
+        // we're the first frame, and it doesn't really matter.
+        const auto start = frame.prev_frame_last_submit->end_handle->get_time();
         const auto end = merged.back().end;
-        const auto not_gputime =
-            (merged.back().end - merged.front().start) - gputime;
+        const auto not_gputime = (end - start) - gputime;
 
         auto timing = Timing{
             .gputime = gputime,
@@ -304,7 +324,6 @@ void QueueContext::process_frames() {
     }
 }
 
-using opt_time_point_t = std::optional<DeviceContext::Clock::time_point_t>;
 void QueueContext::sleep_in_present() {
     const auto& device = this->device_context;
     const auto& vtable = device.vtable;
@@ -350,27 +369,20 @@ void QueueContext::sleep_in_present() {
         return;
     }
 
-    const auto expected_gputime = [&, this]() {
+    const auto calc_median = [&, this](const auto& getter) {
         auto vect = std::vector<Timing*>{};
         std::ranges::transform(this->timings, std::back_inserter(vect),
                                [](const auto& timing) { return timing.get(); });
-        std::ranges::sort(vect, [](const auto& a, const auto& b) {
-            return a->gputime < b->gputime;
+        std::ranges::sort(vect, [&](const auto& a, const auto& b) {
+            return getter(a) < getter(b);
         });
-        // return vect[0]->frametime;
-        return vect[std::size(vect) / 2]->gputime;
-    }();
+        return getter(vect[std::size(vect) / 2]);
+    };
 
-    const auto expected_not_gputime = [&, this]() {
-        auto vect = std::vector<Timing*>{};
-        std::ranges::transform(this->timings, std::back_inserter(vect),
-                               [](const auto& timing) { return timing.get(); });
-        std::ranges::sort(vect, [](const auto& a, const auto& b) {
-            return a->not_gputime < b->not_gputime;
-        });
-        // return vect[0]->frametime;
-        return vect[std::size(vect) / 2]->not_gputime;
-    }();
+    const auto expected_gputime =
+        calc_median([](const auto& timing) { return timing->gputime; });
+    const auto expected_not_gputime =
+        calc_median([](const auto& timing) { return timing->not_gputime; });
 
     std::cerr << "    expected gputime: ";
     debug_log_time(expected_gputime);
@@ -413,13 +425,7 @@ void QueueContext::sleep_in_present() {
 
     // We now know that A is available because its semaphore has been
     // signalled.
-
-    const auto a = [&, this]() {
-        const auto& handle = frame.submissions.front()->start_handle;
-        const auto ticks = handle->get_ticks(*this->timestamp_pool);
-        assert(ticks.has_value());
-        return device_context.clock.ticks_to_time(*ticks);
-    }();
+    const auto a = frame.prev_frame_last_submit->end_handle->get_time();
 
     const auto now = std::chrono::steady_clock::now();
     const auto dist = now - a;
