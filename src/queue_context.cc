@@ -288,6 +288,20 @@ void QueueContext::process_frames() {
             return merged;
         }();
 
+        // It's important to note that gputime starts from a point which isn't
+        // equal to the below 'start' var. It looks something like this, where a
+        // '-' represents CPU time only and '=' represents CPU + GPU.
+        //
+        //   |---------------------|=========|--------|====|-----------------|
+        //   ^ last_present        ^ merged.front().start            present ^
+        //                               merged.back().end ^
+        //
+        // I would imagine there would be more GPU than cpu to reach the anti
+        // lag codepath than is depicted here. We can track the total time
+        // between vkPresent calls as future_submit - last_submit. The total
+        // time the GPU spent engaged is the sum of all intervals. So we can
+        // get a meaningful 'not_gputime' as total - gpu_time.
+
         const auto gputime = std::ranges::fold_left(
             merged, DeviceContext::Clock::time_point_t::duration{},
             [](auto gputime, const auto& interval) {
@@ -295,12 +309,6 @@ void QueueContext::process_frames() {
                 return gputime + (end - start);
             });
 
-        // The start should be the previous frame's last submission, NOT when we
-        // start here. Otherwise, we won't account for the time between the
-        // previous frame's last submission and our first submission, which
-        // could genuinely be a large period of time. So look for it in timings,
-        // because it's guaranteed to be there at this stage. Either that, or
-        // we're the first frame, and it doesn't really matter.
         const auto start = frame.prev_frame_last_submit->end_handle->get_time();
         const auto end = merged.back().end;
         const auto not_gputime = (end - start) - gputime;
@@ -425,7 +433,7 @@ void QueueContext::sleep_in_present() {
 
     // We now know that A is available because its semaphore has been
     // signalled.
-    const auto a = frame.prev_frame_last_submit->end_handle->get_time();
+    const auto a = frame.submissions.front()->start_handle->get_time();
 
     const auto now = std::chrono::steady_clock::now();
     const auto dist = now - a;
