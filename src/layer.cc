@@ -449,6 +449,32 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
         return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
     }
 
+    // What's happening here?
+    // We are making a very modest modification to all vkQueueSubmits where we
+    // inject a start and end timestamp query command buffer that writes when
+    // the GPU started and finished work for each submission. It's important to
+    // note that we deliberately do *NOT* use or modify any semaphores
+    // as a mechanism to signal completion or the availability of these submits
+    // for multiple reasons:
+    //     1. Modifying semaphores (particuarly in vkQueueSubmit1) is ANNOYING
+    //        done correctly. The pNext chain is const and difficult to modify
+    //        without traversing the entire thing and doing surgical deep copies
+    //        and patches for multiple pNext's sType's. It's easier to leave it
+    //        alone.
+    //     2. Semaphores only signal at the end of their work, so we cannot use
+    //        them as a mechanism to know if work has started without doing
+    //        another dummy submission. This adds complexity and also skews our
+    //        timestamps slightly.
+    //     3. Semaphores can be waited which sounds nice in theory, but in my
+    //        own testing waiting on semaphores can cause scheduling issues and
+    //        cause wakeups as late as 1ms from when it was signalled, which is
+    //        unbelievably bad if we're trying to do frame pacing. This means
+    //        we are going to have to do a spinlock poll anyway.
+    //     4. Guess what info we need? Timestamp information. Guess what
+    //        supports polling of an availability bit? Timestamp information.
+    //        Why bother with semaphores at all then? Polling a semaphore might
+    //        be faster, but the difference appears to be negligible.
+
     using cbs_t = std::vector<VkCommandBuffer>;
     auto next_submits = std::vector<VkSubmitInfo>{};
 
@@ -462,13 +488,15 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     // more explicit + insurance if that changes.
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
+    const auto now = std::chrono::steady_clock::now();
+
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
         [&](const auto& submit) {
             const auto head_handle = queue_context->timestamp_pool->acquire();
             const auto tail_handle = queue_context->timestamp_pool->acquire();
             head_handle->setup_command_buffers(*tail_handle, *queue_context);
-            queue_context->notify_submit(submit, head_handle, tail_handle);
+            queue_context->notify_submit(submit, head_handle, tail_handle, now);
 
             handles.emplace_back(head_handle);
             handles.emplace_back(tail_handle);
@@ -508,6 +536,8 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     auto next_submits = std::vector<VkSubmitInfo2>{};
     auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
+    
+    const auto now = std::chrono::steady_clock::now();
 
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
@@ -515,7 +545,7 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
             const auto head_handle = queue_context->timestamp_pool->acquire();
             const auto tail_handle = queue_context->timestamp_pool->acquire();
             head_handle->setup_command_buffers(*tail_handle, *queue_context);
-            queue_context->notify_submit(submit, head_handle, tail_handle);
+            queue_context->notify_submit(submit, head_handle, tail_handle, now);
 
             next_cbs.emplace_back([&]() -> auto {
                 auto cbs = std::make_unique<cbs_t>();

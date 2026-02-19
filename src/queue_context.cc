@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
-#include <limits>
 #include <ranges>
 #include <span>
 
@@ -51,7 +50,8 @@ QueueContext::~QueueContext() {
 void QueueContext::notify_submit(
     const VkSubmitInfo& info,
     const std::shared_ptr<TimestampPool::Handle> head_handle,
-    const std::shared_ptr<TimestampPool::Handle> tail_handle) {
+    const std::shared_ptr<TimestampPool::Handle> tail_handle,
+    const DeviceContext::Clock::time_point_t& now) {
 
     auto signals = std::unordered_set<VkSemaphore>{};
     auto waits = std::unordered_set<VkSemaphore>{};
@@ -71,7 +71,7 @@ void QueueContext::notify_submit(
     }
 
     this->submissions.emplace_back(std::make_unique<Submission>(
-        std::move(signals), std::move(waits), head_handle, tail_handle));
+        std::move(signals), std::move(waits), head_handle, tail_handle, now));
 
     // TODO HACK
     if (std::size(this->submissions) > 100) {
@@ -82,7 +82,8 @@ void QueueContext::notify_submit(
 void QueueContext::notify_submit(
     const VkSubmitInfo2& info,
     const std::shared_ptr<TimestampPool::Handle> head_handle,
-    const std::shared_ptr<TimestampPool::Handle> tail_handle) {
+    const std::shared_ptr<TimestampPool::Handle> tail_handle,
+    const DeviceContext::Clock::time_point_t& now) {
 
     auto signals = std::unordered_set<VkSemaphore>{};
     auto waits = std::unordered_set<VkSemaphore>{};
@@ -108,7 +109,7 @@ void QueueContext::notify_submit(
     }
 
     this->submissions.emplace_back(std::make_unique<Submission>(
-        std::move(signals), std::move(waits), head_handle, tail_handle));
+        std::move(signals), std::move(waits), head_handle, tail_handle, now));
 
     // TODO HACK
     if (std::size(this->submissions) > 100) {
@@ -162,10 +163,9 @@ void QueueContext::notify_present(const VkPresentInfoKHR& info) {
         return *start_iter;
     }();
 
-    this->in_flight_frames.emplace_back(Frame{
-        .prev_frame_last_submit = prev_frame_last_submit,
-        .submissions = std::move(this->submissions),
-    });
+    this->in_flight_frames.emplace_back(
+        Frame{.submissions = std::move(this->submissions),
+              .cpu_post_present_time = std::chrono::steady_clock::now()});
     assert(std::size(this->in_flight_frames.back().submissions));
     // *valid but unspecified state after move, so clear!*
     this->submissions.clear();
@@ -270,14 +270,27 @@ void QueueContext::process_frames() {
                 return gputime + (end - start);
             });
 
-        const auto start =
-            frame.prev_frame_last_submit->end_handle->get_time_required();
-        const auto end = merged.back().end;
-        const auto not_gputime = (end - start) - gputime;
+        // Our cpu_start value here refers to the time when the CPU was allowed
+        // to move past the present call and, in theory, begin cpu work on the
+        // next frame.
+        const auto cpu_start = [&]() -> auto {
+            if (const auto it = std::rbegin(this->timings);
+                it != std::rend(this->timings)) {
+                return (*it)->frame.cpu_post_present_time;
+            }
+            // This will happen *once*, and only for the first frame. We don't
+            // have a way of knowing when the CPU first started work obviously
+            // in this case because we're a vulkan layer and not omniscient.
+            // Just return our first submit's start for this edge case.
+            return frame.submissions.front()->start_handle->get_time_required();
+        }();
+
+        const auto cputime =
+            frame.submissions.front()->enqueued_time - cpu_start;
 
         auto timing = Timing{
             .gputime = gputime,
-            .not_gputime = not_gputime,
+            .cputime = cputime,
             .frame = frame,
         };
         this->timings.emplace_back(std::make_unique<Timing>(timing));
@@ -307,13 +320,14 @@ void QueueContext::sleep_in_present() {
         return;
     }
 
-    // This is doing more than it looks like one line can do (tbf it is a long
-    // line). It's getting the most recent frame and waiting until its start has
+    // This is getting the most recent frame and waiting until its start has
     // begun. This means that, in the case of >1 frame in flight, it's draining
     // all of them before we're allowed to move forward.
-    const auto a = this->in_flight_frames.back()
-                       .submissions.front()
-                       ->start_handle->get_time_spinlock();
+    const auto first_gpu_work = [&]() -> auto {
+        const auto& most_recent_frame = this->in_flight_frames.back();
+        const auto& first_submission = most_recent_frame.submissions.front();
+        return first_submission->start_handle->get_time_spinlock();
+    }();
 
     // Process frames because as stated above, we might have multiple frames
     // now completed.
@@ -343,20 +357,30 @@ void QueueContext::sleep_in_present() {
 
     const auto expected_gputime =
         calc_median([](const auto& timing) { return timing->gputime; });
-    const auto expected_not_gputime =
-        calc_median([](const auto& timing) { return timing->not_gputime; });
+    const auto expected_cputime =
+        calc_median([](const auto& timing) { return timing->cputime; });
 
     std::cerr << "    expected gputime: ";
     debug_log_time(expected_gputime);
-    std::cerr << "    expected not_gputime: ";
-    debug_log_time(expected_not_gputime);
+    std::cerr << "    expected cputime: ";
+    debug_log_time(expected_cputime);
+
+    // Should look like this:
+    //              total_length = expected_gputime
+    // |------------------------x------------------------------|
+    // ^ first_gpu_work        now               last_gpu_work ^
 
     const auto now = std::chrono::steady_clock::now();
-    const auto dist = now - a;
-    const auto expected = expected_gputime - dist;
+    const auto dist = now - first_gpu_work;
+    const auto expected_dist_to_last = expected_gputime - dist;
 
-    const auto& frame = this->in_flight_frames.back();
-    frame.submissions.back()->end_handle->get_time_spinlock(now + expected);
+    const auto wait_time = expected_dist_to_last - expected_cputime;
+
+    auto& frame = this->in_flight_frames.back();
+    const auto& last_gpu_work = frame.submissions.back()->end_handle;
+    last_gpu_work->get_time_spinlock(now + wait_time);
+
+    frame.cpu_post_present_time = std::chrono::steady_clock::now();
 }
 
 } // namespace low_latency

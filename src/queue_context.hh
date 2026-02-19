@@ -36,6 +36,8 @@ class QueueContext final : public Context {
 
         const std::shared_ptr<TimestampPool::Handle> start_handle;
         const std::shared_ptr<TimestampPool::Handle> end_handle;
+        
+        const DeviceContext::Clock::time_point_t enqueued_time;
 
         std::string debug;
     };
@@ -48,14 +50,17 @@ class QueueContext final : public Context {
     // present was called.
     // std::size(submissions) >= 1 btw
     struct Frame {
-        submission_ptr_t prev_frame_last_submit;
         std::deque<submission_ptr_t> submissions;
+
+        // the point that control flow was returned from VkQueuePresentKHR back to the
+        // application. 
+        DeviceContext::Clock::time_point_t cpu_post_present_time;
     };
     std::deque<Frame> in_flight_frames;
 
     // Completed frames.
     struct Timing {
-        DeviceContext::Clock::time_point_t::duration gputime, not_gputime;
+        DeviceContext::Clock::time_point_t::duration gputime, cputime;
 
         Frame frame;
     };
@@ -70,15 +75,15 @@ class QueueContext final : public Context {
     virtual ~QueueContext();
 
   public:
-    void
-    notify_submit(const VkSubmitInfo& info,
-                  const std::shared_ptr<TimestampPool::Handle> head_handle,
-                  const std::shared_ptr<TimestampPool::Handle> tail_handle);
+    void notify_submit(const VkSubmitInfo& info,
+                       const std::shared_ptr<TimestampPool::Handle> head_handle,
+                       const std::shared_ptr<TimestampPool::Handle> tail_handle,
+                       const DeviceContext::Clock::time_point_t& now);
 
-    void
-    notify_submit(const VkSubmitInfo2& info,
-                  const std::shared_ptr<TimestampPool::Handle> head_handle,
-                  const std::shared_ptr<TimestampPool::Handle> tail_handle);
+    void notify_submit(const VkSubmitInfo2& info,
+                       const std::shared_ptr<TimestampPool::Handle> head_handle,
+                       const std::shared_ptr<TimestampPool::Handle> tail_handle,
+                       const DeviceContext::Clock::time_point_t& now);
 
     void notify_present(const VkPresentInfoKHR& info);
 
