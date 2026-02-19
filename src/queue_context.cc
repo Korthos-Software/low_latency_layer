@@ -28,25 +28,6 @@ make_command_pool(const DeviceContext& device_context,
     return command_pool;
 }
 
-static VkSemaphore make_semaphore(const DeviceContext& device_context) {
-
-    const auto stci = VkSemaphoreTypeCreateInfo{
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
-        .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
-        .initialValue = 0,
-    };
-
-    const auto sci = VkSemaphoreCreateInfo{
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-        .pNext = &stci,
-    };
-
-    auto semaphore = VkSemaphore{};
-    device_context.vtable.CreateSemaphore(device_context.device, &sci, nullptr,
-                                          &semaphore);
-    return semaphore;
-}
-
 QueueContext::QueueContext(DeviceContext& device_context, const VkQueue& queue,
                            const std::uint32_t& queue_family_index)
     : device_context(device_context), queue(queue),
@@ -54,7 +35,6 @@ QueueContext::QueueContext(DeviceContext& device_context, const VkQueue& queue,
       // Important we make the command pool before the timestamp pool, because
       // it's a dependency.
       command_pool(make_command_pool(device_context, queue_family_index)),
-      semaphore(make_semaphore(device_context)),
       timestamp_pool(std::make_unique<TimestampPool>(*this)) {}
 
 QueueContext::~QueueContext() {
@@ -64,14 +44,12 @@ QueueContext::~QueueContext() {
     this->timestamp_pool.reset();
 
     const auto& vtable = this->device_context.vtable;
-    vtable.DestroySemaphore(this->device_context.device, this->semaphore,
-                            nullptr);
     vtable.DestroyCommandPool(this->device_context.device, this->command_pool,
                               nullptr);
 }
 
 void QueueContext::notify_submit(
-    const VkSubmitInfo& info, const std::uint64_t& sequence,
+    const VkSubmitInfo& info,
     const std::shared_ptr<TimestampPool::Handle> head_handle,
     const std::shared_ptr<TimestampPool::Handle> tail_handle) {
 
@@ -92,9 +70,8 @@ void QueueContext::notify_submit(
         std::cerr << "      " << wait << '\n';
     }
 
-    this->submissions.emplace_back(
-        std::make_unique<Submission>(std::move(signals), std::move(waits),
-                                     head_handle, tail_handle, sequence));
+    this->submissions.emplace_back(std::make_unique<Submission>(
+        std::move(signals), std::move(waits), head_handle, tail_handle));
 
     // TODO HACK
     if (std::size(this->submissions) > 100) {
@@ -103,7 +80,7 @@ void QueueContext::notify_submit(
 }
 
 void QueueContext::notify_submit(
-    const VkSubmitInfo2& info, const std::uint64_t& sequence,
+    const VkSubmitInfo2& info,
     const std::shared_ptr<TimestampPool::Handle> head_handle,
     const std::shared_ptr<TimestampPool::Handle> tail_handle) {
 
@@ -130,9 +107,8 @@ void QueueContext::notify_submit(
         std::cerr << "      " << wait << '\n';
     }
 
-    this->submissions.emplace_back(
-        std::make_unique<Submission>(std::move(signals), std::move(waits),
-                                     head_handle, tail_handle, sequence));
+    this->submissions.emplace_back(std::make_unique<Submission>(
+        std::move(signals), std::move(waits), head_handle, tail_handle));
 
     // TODO HACK
     if (std::size(this->submissions) > 100) {
@@ -165,7 +141,7 @@ void QueueContext::notify_present(const VkPresentInfoKHR& info) {
 
     // The last submission is either in flight, already processed, or we
     // just happen to be the first frame and we can just set it to our start
-    // with little conseuqence.
+    // with little consequence.
     const auto prev_frame_last_submit = [&]() -> auto {
         if (const auto iter = std::rbegin(this->in_flight_frames);
             iter != std::rend(this->in_flight_frames)) {
@@ -189,7 +165,6 @@ void QueueContext::notify_present(const VkPresentInfoKHR& info) {
     this->in_flight_frames.emplace_back(Frame{
         .prev_frame_last_submit = prev_frame_last_submit,
         .submissions = std::move(this->submissions),
-        .sequence = (*last_iter)->sequence,
     });
     assert(std::size(this->in_flight_frames.back().submissions));
     // *valid but unspecified state after move, so clear!*
@@ -211,21 +186,11 @@ void QueueContext::process_frames() {
 
     // We used to collect all devices that were pointed to by all potential
     // submissions, put them in a set and then call.calibrate() on each once.
-    // This is unnecessary now - we can assume all submissions come from the
-    // same queue (this one!).
+    // This is unnecessary now - we assume all submissions come from the same
+    // queue. FIXME: don't assume this.
     auto& device_context = this->device_context;
     auto& clock = device_context.clock;
     clock.calibrate();
-
-    // Get the queue's sequence number so we can quickly check
-    // frames are finished without calling getCalibratedTimestamps.
-    // This is somewhat a premature optimization but it's elegant.
-    const auto seq = [&, this]() -> auto {
-        auto seq = std::uint64_t{0};
-        device_context.vtable.GetSemaphoreCounterValueKHR(
-            device_context.device, this->semaphore, &seq);
-        return seq;
-    }();
 
     while (std::size(this->in_flight_frames)) {
         const auto& frame = this->in_flight_frames.front();
@@ -237,7 +202,7 @@ void QueueContext::process_frames() {
         const auto& last_submission = frame.submissions.back();
 
         // Not completed (so future frames definitely aren't) - stop early.
-        if (seq < last_submission->sequence) {
+        if (!last_submission->end_handle->get_time().has_value()) {
             break;
         }
 
@@ -256,13 +221,9 @@ void QueueContext::process_frames() {
             std::ranges::transform(
                 frame.submissions, std::back_inserter(intervals),
                 [&, this](const auto& submission) {
-                    const auto get_time = [&, this](const auto& handle) {
-                        return handle->get_time();
-                    };
-
                     return Interval{
-                        .start = get_time(submission->start_handle),
-                        .end = get_time(submission->end_handle),
+                        .start = submission->start_handle->get_time_required(),
+                        .end = submission->end_handle->get_time_required(),
                     };
                 });
 
@@ -309,7 +270,8 @@ void QueueContext::process_frames() {
                 return gputime + (end - start);
             });
 
-        const auto start = frame.prev_frame_last_submit->end_handle->get_time();
+        const auto start =
+            frame.prev_frame_last_submit->end_handle->get_time_required();
         const auto end = merged.back().end;
         const auto not_gputime = (end - start) - gputime;
 
@@ -341,32 +303,24 @@ void QueueContext::sleep_in_present() {
     // frames*.
     this->process_frames();
 
-    if (const auto F = std::size(this->in_flight_frames); F > 1) {
-        // In this case, we are so far ahead that there are multiple frames
-        // in flight. Either that, or our bookkeeping has gone horribly
-        // wrong! Wait on the 2nd last frame in flight to complete. This
-        // shunts us to F=1.
-        const auto second_iter = std::next(std::rbegin(this->in_flight_frames));
-        assert(second_iter != std::rend(this->in_flight_frames));
-
-        const auto swi = VkSemaphoreWaitInfo{
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-            .semaphoreCount = 1,
-            .pSemaphores = &this->semaphore,
-            .pValues = &second_iter->sequence,
-        };
-        vtable.WaitSemaphoresKHR(device.device, &swi,
-                                 std::numeric_limits<std::uint64_t>::max());
-
-        // Here
-        this->process_frames(); // get rid of completed frames
-    } else if (!F) {
-        // We have completed all frames. DO NOT WAIT!
+    if (!std::size(this->in_flight_frames)) {
         return;
     }
 
-    // We are checking size again because process_frames might have drained
-    // it to zero.
+    // This is doing more than it looks like one line can do (tbf it is a long
+    // line). It's getting the most recent frame and waiting until its start has
+    // begun. This means that, in the case of >1 frame in flight, it's draining
+    // all of them before we're allowed to move forward.
+    const auto a = this->in_flight_frames.back()
+                       .submissions.front()
+                       ->start_handle->get_time_spinlock();
+
+    // Process frames because as stated above, we might have multiple frames
+    // now completed.
+    this->process_frames();
+
+    // Check the size again because the frame we want to target may have already
+    // completed when we called process_frames().
     if (!std::size(this->in_flight_frames)) {
         return;
     }
@@ -397,56 +351,12 @@ void QueueContext::sleep_in_present() {
     std::cerr << "    expected not_gputime: ";
     debug_log_time(expected_not_gputime);
 
-    //                               PRESENT CALL
-    // |----------------------------------|----------------|
-    // first                              b                c
-    //
-    // Us, the CPU on the host, is approximately at 'b'. We have a good
-    // guess for the distance between a and b as gputime.
-
-    const auto& frame = this->in_flight_frames.back();
-
-    // We could be in the period where A hasn't signalled yet.
-    // It's impossible to make a decision until we know a.
-    // Doing this is fine because it won't affect throughput at all.
-    // (ie, there's more work queued after regardless).
-    // FIXME: If a == b, then we're waiting for the entire queue
-    // to finish because the semaphore only says if it has finished.
-    // The fix is to check the start timestamp instead of the query
-    // in the case that it's...
-    // Honestly it might be better to signal two semaphores because
-    // we need to wait for when the submission starts work and
-    // right now, we only signal when the submission finishes work.
-    // Ideally we have both, so we can elegantly wait on the start
-    // semaphore of A, then get A's start timestamp. This is BROKEN.
-
-    [&]() -> void {
-        const auto swi = VkSemaphoreWaitInfo{
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-            .semaphoreCount = 1,
-            .pSemaphores = &this->semaphore,
-            .pValues = &frame.submissions.front()->sequence,
-        };
-        vtable.WaitSemaphoresKHR(device.device, &swi,
-                                 std::numeric_limits<std::uint64_t>::max());
-    }();
-
-    // We now know that A is available because its semaphore has been
-    // signalled.
-    const auto a = frame.submissions.front()->start_handle->get_time();
-
     const auto now = std::chrono::steady_clock::now();
     const auto dist = now - a;
     const auto expected = expected_gputime - dist;
 
-    const auto swi = VkSemaphoreWaitInfo{
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
-        .semaphoreCount = 1,
-        .pSemaphores = &this->semaphore,
-        .pValues = &frame.sequence,
-    };
-    vtable.WaitSemaphoresKHR(device.device, &swi,
-                             std::max(expected.count(), 0l));
+    const auto& frame = this->in_flight_frames.back();
+    frame.submissions.back()->end_handle->get_time_spinlock(now + expected);
 }
 
 } // namespace low_latency

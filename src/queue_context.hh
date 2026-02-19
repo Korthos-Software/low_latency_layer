@@ -22,9 +22,6 @@ class QueueContext final : public Context {
     const VkQueue queue;
     const std::uint32_t queue_family_index;
 
-    std::uint64_t semaphore_sequence = 0;
-    VkSemaphore semaphore;
-
     VkCommandPool command_pool;
 
     std::unique_ptr<TimestampPool> timestamp_pool;
@@ -40,8 +37,6 @@ class QueueContext final : public Context {
         const std::shared_ptr<TimestampPool::Handle> start_handle;
         const std::shared_ptr<TimestampPool::Handle> end_handle;
 
-        std::uint64_t sequence;
-
         std::string debug;
     };
     using submission_ptr_t = std::shared_ptr<Submission>;
@@ -55,7 +50,6 @@ class QueueContext final : public Context {
     struct Frame {
         submission_ptr_t prev_frame_last_submit;
         std::deque<submission_ptr_t> submissions;
-        std::uint64_t sequence;
     };
     std::deque<Frame> in_flight_frames;
 
@@ -77,12 +71,12 @@ class QueueContext final : public Context {
 
   public:
     void
-    notify_submit(const VkSubmitInfo& info, const std::uint64_t& sequence,
+    notify_submit(const VkSubmitInfo& info,
                   const std::shared_ptr<TimestampPool::Handle> head_handle,
                   const std::shared_ptr<TimestampPool::Handle> tail_handle);
 
     void
-    notify_submit(const VkSubmitInfo2& info, const std::uint64_t& sequence,
+    notify_submit(const VkSubmitInfo2& info,
                   const std::shared_ptr<TimestampPool::Handle> head_handle,
                   const std::shared_ptr<TimestampPool::Handle> tail_handle);
 

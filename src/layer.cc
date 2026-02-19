@@ -282,8 +282,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         DEVICE_VTABLE_LOAD(DestroyDevice),
         DEVICE_VTABLE_LOAD(GetDeviceQueue),
         DEVICE_VTABLE_LOAD(QueueSubmit),
-        DEVICE_VTABLE_LOAD(CreateSemaphore),
-        DEVICE_VTABLE_LOAD(DestroySemaphore),
         DEVICE_VTABLE_LOAD(CreateQueryPool),
         DEVICE_VTABLE_LOAD(DestroyQueryPool),
         DEVICE_VTABLE_LOAD(GetQueryPoolResults),
@@ -302,8 +300,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         DEVICE_VTABLE_LOAD(AcquireNextImageKHR),
         DEVICE_VTABLE_LOAD(QueuePresentKHR),
         DEVICE_VTABLE_LOAD(AcquireNextImage2KHR),
-        DEVICE_VTABLE_LOAD(GetSemaphoreCounterValueKHR),
-        DEVICE_VTABLE_LOAD(WaitSemaphoresKHR),
         DEVICE_VTABLE_LOAD(CmdWriteTimestamp2KHR),
         DEVICE_VTABLE_LOAD(QueueSubmit2KHR),
         DEVICE_VTABLE_LOAD(GetCalibratedTimestampsKHR),
@@ -453,55 +449,44 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
         return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
     }
 
-    // We have to avoid casting away the const* of the passed VkSubmitInfos.
-    // So we end up copying a lot of stuff and wrapping them in unique_ptrs
-    // so their position in memory is stable.
-
-    using cb_vect = std::vector<VkCommandBuffer>;
-    using tssi_t = VkTimelineSemaphoreSubmitInfo;
+    using cbs_t = std::vector<VkCommandBuffer>;
     auto next_submits = std::vector<VkSubmitInfo>{};
-    auto next_cbs = std::vector<std::unique_ptr<cb_vect>>{};
+
+    // We're making modifications to multiple vkQueueSubmits. These have raw
+    // pointers to our command buffer arrays - of which the position in memory
+    // of can change on vector reallocation. So we use unique_ptrs here.
+    auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
+
+    // notify_submit() should take copies of these shared_ptrs and store
+    // them for the duration of our call, but saving them here is a bit
+    // more explicit + insurance if that changes.
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
-    auto tssis = std::vector<std::unique_ptr<tssi_t>>{};
 
-    for (const auto& submit_info : std::span{submit_infos, submit_count}) {
-        const auto head_handle = queue_context->timestamp_pool->acquire();
-        const auto tail_handle = queue_context->timestamp_pool->acquire();
-
-        next_cbs.emplace_back([&]() -> auto {
-            auto cbs = std::make_unique<std::vector<VkCommandBuffer>>();
+    std::ranges::transform(
+        std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
+        [&](const auto& submit) {
+            const auto head_handle = queue_context->timestamp_pool->acquire();
+            const auto tail_handle = queue_context->timestamp_pool->acquire();
             head_handle->setup_command_buffers(*tail_handle, *queue_context);
-            cbs->push_back(head_handle->command_buffer);
-            std::ranges::copy_n(submit_info.pCommandBuffers,
-                                submit_info.commandBufferCount,
-                                std::back_inserter(*cbs));
-            cbs->push_back(tail_handle->command_buffer);
-            return cbs;
-        }());
-        next_submits.push_back(submit_info);
-        next_submits.back().pCommandBuffers = std::data(*next_cbs.back());
-        next_submits.back().commandBufferCount = std::size(*next_cbs.back());
-        handles.push_back(head_handle);
-        handles.push_back(tail_handle);
+            queue_context->notify_submit(submit, head_handle, tail_handle);
 
-        // We submit an extra command which signals a timeline semaphore which
-        // signals that this command has completed.
-        const auto sequence = 1 + queue_context->semaphore_sequence++;
-        queue_context->notify_submit(submit_info, sequence, head_handle,
-                                     tail_handle);
+            handles.emplace_back(head_handle);
+            handles.emplace_back(tail_handle);
+            next_cbs.emplace_back([&]() -> auto {
+                auto cbs = std::make_unique<cbs_t>();
+                cbs->push_back(head_handle->command_buffer);
+                std::ranges::copy_n(submit.pCommandBuffers,
+                                    submit.commandBufferCount,
+                                    std::back_inserter(*cbs));
+                cbs->push_back(tail_handle->command_buffer);
+                return cbs;
+            }());
 
-        tssis.push_back(std::make_unique<tssi_t>(tssi_t{
-            .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO_KHR,
-            .signalSemaphoreValueCount = 1,
-            .pSignalSemaphoreValues = &sequence,
-        }));
-        next_submits.push_back(VkSubmitInfo{
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .pNext = tssis.back().get(),
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &queue_context->semaphore,
+            auto next_submit = submit;
+            next_submit.pCommandBuffers = std::data(*next_cbs.back());
+            next_submit.commandBufferCount = std::size(*next_cbs.back());
+            return next_submit;
         });
-    }
 
     return vtable.QueueSubmit(queue, std::size(next_submits),
                               std::data(next_submits), fence);
@@ -519,57 +504,42 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
         return vtable.QueueSubmit2(queue, submit_count, submit_infos, fence);
     }
 
-    using cb_vect_t = std::vector<VkCommandBufferSubmitInfo>;
+    using cbs_t = std::vector<VkCommandBufferSubmitInfo>;
     auto next_submits = std::vector<VkSubmitInfo2>{};
-    auto next_cbs = std::vector<std::unique_ptr<cb_vect_t>>{};
+    auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
-    auto next_ssis = std::vector<std::unique_ptr<VkSemaphoreSubmitInfo>>{};
 
-    for (const auto& submit_info : std::span{submit_infos, submit_count}) {
-        const auto head_handle = queue_context->timestamp_pool->acquire();
-        const auto tail_handle = queue_context->timestamp_pool->acquire();
-
-        next_cbs.emplace_back([&]() -> auto {
-            auto cbs = std::make_unique<cb_vect_t>();
+    std::ranges::transform(
+        std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
+        [&](const auto& submit) {
+            const auto head_handle = queue_context->timestamp_pool->acquire();
+            const auto tail_handle = queue_context->timestamp_pool->acquire();
             head_handle->setup_command_buffers(*tail_handle, *queue_context);
-            cbs->push_back(VkCommandBufferSubmitInfo{
-                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-                .commandBuffer = head_handle->command_buffer,
-            });
-            std::ranges::copy_n(submit_info.pCommandBufferInfos,
-                                submit_info.commandBufferInfoCount,
-                                std::back_inserter(*cbs));
-            cbs->push_back(VkCommandBufferSubmitInfo{
-                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-                .commandBuffer = tail_handle->command_buffer,
-            });
-            return cbs;
-        }());
+            queue_context->notify_submit(submit, head_handle, tail_handle);
 
-        next_submits.push_back(submit_info);
-        next_submits.back().pCommandBufferInfos = std::data(*next_cbs.back());
-        next_submits.back().commandBufferInfoCount =
-            std::size(*next_cbs.back());
-        handles.push_back(head_handle);
-        handles.push_back(tail_handle);
+            next_cbs.emplace_back([&]() -> auto {
+                auto cbs = std::make_unique<cbs_t>();
+                head_handle->setup_command_buffers(*tail_handle,
+                                                   *queue_context);
+                cbs->push_back(VkCommandBufferSubmitInfo{
+                    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                    .commandBuffer = head_handle->command_buffer,
+                });
+                std::ranges::copy_n(submit.pCommandBufferInfos,
+                                    submit.commandBufferInfoCount,
+                                    std::back_inserter(*cbs));
+                cbs->push_back(VkCommandBufferSubmitInfo{
+                    .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                    .commandBuffer = tail_handle->command_buffer,
+                });
+                return cbs;
+            }());
 
-        const auto sequence = 1 + queue_context->semaphore_sequence++;
-        queue_context->notify_submit(submit_info, sequence, head_handle,
-                                     tail_handle);
-
-        next_ssis.push_back(
-            std::make_unique<VkSemaphoreSubmitInfo>(VkSemaphoreSubmitInfo{
-                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-                .semaphore = queue_context->semaphore,
-                .value = sequence,
-                .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-            }));
-        next_submits.push_back(VkSubmitInfo2{
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
-            .signalSemaphoreInfoCount = 1,
-            .pSignalSemaphoreInfos = next_ssis.back().get(),
+            auto next_submit = submit;
+            next_submit.pCommandBufferInfos = std::data(*next_cbs.back());
+            next_submit.commandBufferInfoCount = std::size(*next_cbs.back());
+            return next_submit;
         });
-    }
 
     return vtable.QueueSubmit2(queue, std::size(next_submits),
                                std::data(next_submits), fence);

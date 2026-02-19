@@ -60,6 +60,11 @@ class TimestampPool final {
         friend class TimestampPool;
 
       private:
+        // For our spinlock functions this is the period in which we sleep
+        // between attempts.
+        static constexpr auto SPINLOCK_MAX_DELAY = std::chrono::microseconds(1);
+
+      private:
         const TimestampPool& timestamp_pool;
         const std::weak_ptr<QueryChunk> origin_chunk;
 
@@ -82,7 +87,20 @@ class TimestampPool final {
         void setup_command_buffers(const Handle& tail,
                                    const QueueContext& queue_context) const;
 
-        DeviceContext::Clock::time_point_t get_time();
+        // Attempts to get_time, but returns an optional if it's not available
+        // yet.
+        std::optional<DeviceContext::Clock::time_point_t> get_time();
+
+        // Calls get_time() repeatedly under a spinlock, or gives up at
+        // time_point_t and returns std::nullopt.
+        std::optional<DeviceContext::Clock::time_point_t>
+        get_time_spinlock(const DeviceContext::Clock::time_point_t& until);
+
+        // Calls get_time() repeatedly under a spinlock until it's available.
+        DeviceContext::Clock::time_point_t get_time_spinlock();
+
+        // Calls get_time with the assumption it's already available.
+        DeviceContext::Clock::time_point_t get_time_required();
     };
 
   public:

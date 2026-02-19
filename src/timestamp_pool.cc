@@ -2,7 +2,9 @@
 #include "device_context.hh"
 #include "queue_context.hh"
 
+#include <chrono>
 #include <ranges>
+#include <thread>
 #include <vulkan/utility/vk_dispatch_table.h>
 #include <vulkan/vulkan_core.h>
 
@@ -123,35 +125,66 @@ void TimestampPool::Handle::setup_command_buffers(
     vtable.EndCommandBuffer(tail.command_buffer);
 }
 
-DeviceContext::Clock::time_point_t TimestampPool::Handle::get_time() {
+std::optional<DeviceContext::Clock::time_point_t>
+TimestampPool::Handle::get_time() {
     const auto& device_ctx = this->timestamp_pool.queue_context.device_context;
     const auto& vtable = device_ctx.vtable;
 
-    // For debug builds, we're going to query the availability bit so we can
-    // assert that after the semaphore has flagged it as naturally available.
     struct QueryResult {
         std::uint64_t value;
-#ifndef NDEBUG
         std::uint64_t available;
-#endif
     };
     auto query_result = QueryResult{};
 
-    constexpr auto query_flags = []() -> auto {
-        auto flag = VkQueryResultFlags{VK_QUERY_RESULT_64_BIT};
-#ifndef NDEBUG
-        flag |= VK_QUERY_RESULT_WITH_AVAILABILITY_BIT;
-#endif
-        return flag;
-    }();
-
     const auto r = vtable.GetQueryPoolResults(
         device_ctx.device, query_pool, this->query_index, 1,
-        sizeof(query_result), &query_result, sizeof(query_result), query_flags);
+        sizeof(query_result), &query_result, sizeof(query_result),
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
 
-    assert(r == VK_SUCCESS && query_result.available);
+    assert(r == VK_SUCCESS || r == VK_NOT_READY);
+
+    if (!query_result.available) {
+        return std::nullopt;
+    }
 
     return device_ctx.clock.ticks_to_time(query_result.value);
+}
+
+std::optional<DeviceContext::Clock::time_point_t>
+TimestampPool::Handle::get_time_spinlock(
+    const DeviceContext::Clock::time_point_t& until) {
+    
+    auto time = this->get_time();
+    if (time.has_value()) { // fast path, avoid now().
+        return time;
+    }
+    
+    auto last = std::chrono::steady_clock::now();
+    for (; !time.has_value(); time = this->get_time()) {
+        
+        if (const auto now = std::chrono::steady_clock::now(); now >= until) {
+            break;
+        }
+        
+        // Afaik no-op if it's too far behind, which is ideal.
+        std::this_thread::sleep_until(std::min(last + this->SPINLOCK_MAX_DELAY, until));
+
+        last = std::chrono::steady_clock::now();
+    }
+            
+    return time;
+}
+
+DeviceContext::Clock::time_point_t TimestampPool::Handle::get_time_spinlock() {
+    const auto time = this->get_time_spinlock(DeviceContext::Clock::time_point_t::max());
+    assert(time.has_value());
+    return *time;
+}
+
+DeviceContext::Clock::time_point_t TimestampPool::Handle::get_time_required() {
+    const auto time = this->get_time();
+    assert(time.has_value());
+    return *time;
 }
 
 TimestampPool::~TimestampPool() {
