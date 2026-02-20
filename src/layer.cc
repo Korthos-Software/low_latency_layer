@@ -628,6 +628,7 @@ static const auto device_functions = func_map_t{
 
     HOOK_ENTRY("vkQueueSubmit", low_latency::vkQueueSubmit),
     HOOK_ENTRY("vkQueueSubmit2", low_latency::vkQueueSubmit2),
+    HOOK_ENTRY("vkQueueSubmit2KHR", low_latency::vkQueueSubmit2KHR),
 
     HOOK_ENTRY("vkQueuePresentKHR", low_latency::vkQueuePresentKHR),
 
