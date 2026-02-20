@@ -84,15 +84,14 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     const auto key = layer_context.get_key(*pInstance);
 
 #define INSTANCE_VTABLE_LOAD(name)                                             \
-    .name = reinterpret_cast<PFN_vk##name>(gipa(*pInstance, "vk" #name))
-    auto vtable = VkuInstanceDispatchTable{
-        INSTANCE_VTABLE_LOAD(DestroyInstance),
-        INSTANCE_VTABLE_LOAD(EnumeratePhysicalDevices),
-        INSTANCE_VTABLE_LOAD(GetPhysicalDeviceProperties),
-        INSTANCE_VTABLE_LOAD(GetInstanceProcAddr),
-        INSTANCE_VTABLE_LOAD(CreateDevice),
-        INSTANCE_VTABLE_LOAD(EnumerateDeviceExtensionProperties),
-    };
+    vtable.name = reinterpret_cast<PFN_vk##name>(gipa(*pInstance, "vk" #name))
+    auto vtable = VkuInstanceDispatchTable{};
+    INSTANCE_VTABLE_LOAD(DestroyInstance);
+    INSTANCE_VTABLE_LOAD(EnumeratePhysicalDevices);
+    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceProperties);
+    INSTANCE_VTABLE_LOAD(GetInstanceProcAddr);
+    INSTANCE_VTABLE_LOAD(CreateDevice);
+    INSTANCE_VTABLE_LOAD(EnumerateDeviceExtensionProperties);
 #undef INSTANCE_VTABLE_LOAD
 
     const auto lock = std::scoped_lock{layer_context.mutex};
@@ -274,35 +273,34 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     }
 
 #define DEVICE_VTABLE_LOAD(name)                                               \
-    .name = reinterpret_cast<PFN_vk##name>(gdpa(*pDevice, "vk" #name))
-    auto vtable = VkuDeviceDispatchTable{
-        DEVICE_VTABLE_LOAD(GetDeviceProcAddr),
-        DEVICE_VTABLE_LOAD(DestroyDevice),
-        DEVICE_VTABLE_LOAD(GetDeviceQueue),
-        DEVICE_VTABLE_LOAD(QueueSubmit),
-        DEVICE_VTABLE_LOAD(CreateQueryPool),
-        DEVICE_VTABLE_LOAD(DestroyQueryPool),
-        DEVICE_VTABLE_LOAD(GetQueryPoolResults),
-        DEVICE_VTABLE_LOAD(CreateCommandPool),
-        DEVICE_VTABLE_LOAD(DestroyCommandPool),
-        DEVICE_VTABLE_LOAD(AllocateCommandBuffers),
-        DEVICE_VTABLE_LOAD(FreeCommandBuffers),
-        DEVICE_VTABLE_LOAD(BeginCommandBuffer),
-        DEVICE_VTABLE_LOAD(EndCommandBuffer),
-        DEVICE_VTABLE_LOAD(ResetCommandBuffer),
-        DEVICE_VTABLE_LOAD(CmdDraw),
-        DEVICE_VTABLE_LOAD(CmdDrawIndexed),
-        DEVICE_VTABLE_LOAD(CmdResetQueryPool),
-        DEVICE_VTABLE_LOAD(GetDeviceQueue2),
-        DEVICE_VTABLE_LOAD(QueueSubmit2),
-        DEVICE_VTABLE_LOAD(AcquireNextImageKHR),
-        DEVICE_VTABLE_LOAD(QueuePresentKHR),
-        DEVICE_VTABLE_LOAD(AcquireNextImage2KHR),
-        DEVICE_VTABLE_LOAD(CmdWriteTimestamp2KHR),
-        DEVICE_VTABLE_LOAD(QueueSubmit2KHR),
-        DEVICE_VTABLE_LOAD(GetCalibratedTimestampsKHR),
-        DEVICE_VTABLE_LOAD(ResetQueryPoolEXT),
-    };
+    vtable.name = reinterpret_cast<PFN_vk##name>(gdpa(*pDevice, "vk" #name))
+    auto vtable = VkuDeviceDispatchTable{};
+    DEVICE_VTABLE_LOAD(GetDeviceProcAddr);
+    DEVICE_VTABLE_LOAD(DestroyDevice);
+    DEVICE_VTABLE_LOAD(GetDeviceQueue);
+    DEVICE_VTABLE_LOAD(QueueSubmit);
+    DEVICE_VTABLE_LOAD(CreateQueryPool);
+    DEVICE_VTABLE_LOAD(DestroyQueryPool);
+    DEVICE_VTABLE_LOAD(GetQueryPoolResults);
+    DEVICE_VTABLE_LOAD(CreateCommandPool);
+    DEVICE_VTABLE_LOAD(DestroyCommandPool);
+    DEVICE_VTABLE_LOAD(AllocateCommandBuffers);
+    DEVICE_VTABLE_LOAD(FreeCommandBuffers);
+    DEVICE_VTABLE_LOAD(BeginCommandBuffer);
+    DEVICE_VTABLE_LOAD(EndCommandBuffer);
+    DEVICE_VTABLE_LOAD(ResetCommandBuffer);
+    DEVICE_VTABLE_LOAD(CmdDraw);
+    DEVICE_VTABLE_LOAD(CmdDrawIndexed);
+    DEVICE_VTABLE_LOAD(CmdResetQueryPool);
+    DEVICE_VTABLE_LOAD(GetDeviceQueue2);
+    DEVICE_VTABLE_LOAD(QueueSubmit2);
+    DEVICE_VTABLE_LOAD(AcquireNextImageKHR);
+    DEVICE_VTABLE_LOAD(QueuePresentKHR);
+    DEVICE_VTABLE_LOAD(AcquireNextImage2KHR);
+    DEVICE_VTABLE_LOAD(CmdWriteTimestamp2KHR);
+    DEVICE_VTABLE_LOAD(QueueSubmit2KHR);
+    DEVICE_VTABLE_LOAD(GetCalibratedTimestampsKHR);
+    DEVICE_VTABLE_LOAD(ResetQueryPoolEXT);
 #undef DEVICE_VTABLE_LOAD
 
     const auto physical_context = layer_context.get_context(physical_device);
