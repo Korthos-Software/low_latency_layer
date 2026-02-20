@@ -213,12 +213,10 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         }
 
         auto next_extensions = std::vector<const char*>{};
-        if (pCreateInfo->ppEnabledExtensionNames) {
 
-            std::ranges::copy_n(pCreateInfo->ppEnabledExtensionNames,
-                                pCreateInfo->enabledExtensionCount,
-                                std::back_inserter(next_extensions));
-        }
+        std::ranges::copy(std::span{pCreateInfo->ppEnabledExtensionNames,
+                                    pCreateInfo->enabledExtensionCount},
+                          std::back_inserter(next_extensions));
 
         const auto wanted_extensions = {
             VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
@@ -503,9 +501,9 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
             next_cbs.emplace_back([&]() -> auto {
                 auto cbs = std::make_unique<cbs_t>();
                 cbs->push_back(head_handle->command_buffer);
-                std::ranges::copy_n(submit.pCommandBuffers,
-                                    submit.commandBufferCount,
-                                    std::back_inserter(*cbs));
+                std::ranges::copy(std::span{submit.pCommandBuffers,
+                                            submit.commandBufferCount},
+                                  std::back_inserter(*cbs));
                 cbs->push_back(tail_handle->command_buffer);
                 return cbs;
             }());
@@ -555,9 +553,9 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
                     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
                     .commandBuffer = head_handle->command_buffer,
                 });
-                std::ranges::copy_n(submit.pCommandBufferInfos,
-                                    submit.commandBufferInfoCount,
-                                    std::back_inserter(*cbs));
+                std::ranges::copy(std::span{submit.pCommandBufferInfos,
+                                            submit.commandBufferInfoCount},
+                                  std::back_inserter(*cbs));
                 cbs->push_back(VkCommandBufferSubmitInfo{
                     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
                     .commandBuffer = tail_handle->command_buffer,

@@ -55,10 +55,11 @@ void QueueContext::notify_submit(
 
     auto signals = std::unordered_set<VkSemaphore>{};
     auto waits = std::unordered_set<VkSemaphore>{};
-    std::ranges::copy_n(info.pWaitSemaphores, info.waitSemaphoreCount,
-                        std::inserter(waits, std::end(waits)));
-    std::ranges::copy_n(info.pSignalSemaphores, info.signalSemaphoreCount,
-                        std::inserter(signals, std::end(signals)));
+    std::ranges::copy(std::span{info.pWaitSemaphores, info.waitSemaphoreCount},
+                      std::inserter(waits, std::end(waits)));
+    std::ranges::copy(
+        std::span{info.pSignalSemaphores, info.signalSemaphoreCount},
+        std::inserter(signals, std::end(signals)));
 
     std::cerr << "submit1 notif for queue " << this->queue << '\n';
     std::cerr << "    signals: \n";
