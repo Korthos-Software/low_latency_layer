@@ -89,6 +89,9 @@ class QueueContext final : public Context {
 
   public:
     void sleep_in_present();
+    
+  public:
+    bool should_inject_timestamps() const;
 };
 
 }; // namespace low_latency

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <iostream>
 #include <ranges>
 #include <span>
@@ -172,12 +173,16 @@ void QueueContext::notify_present(const VkPresentInfoKHR& info) {
     this->submissions.clear();
 }
 
-const auto debug_log_time = [](const auto& diff) {
+const auto debug_log_time2 = [](auto& stream, const auto& diff) {
     using namespace std::chrono;
     const auto ms = duration_cast<milliseconds>(diff);
     const auto us = duration_cast<microseconds>(diff - ms);
     const auto ns = duration_cast<nanoseconds>(diff - ms - us);
-    std::cerr << ms << " " << us << " " << ns << " ago\n";
+    stream << ms << " " << us << " " << ns << " ago\n";
+};
+
+const auto debug_log_time = [](const auto& diff) {
+    debug_log_time2(std::cerr, diff);
 };
 
 void QueueContext::process_frames() {
@@ -361,11 +366,6 @@ void QueueContext::sleep_in_present() {
     const auto expected_cputime =
         calc_median([](const auto& timing) { return timing->cputime; });
 
-    std::cerr << "    expected gputime: ";
-    debug_log_time(expected_gputime);
-    std::cerr << "    expected cputime: ";
-    debug_log_time(expected_cputime);
-
     // Should look like this:
     //              total_length = expected_gputime
     // |------------------------x------------------------------|
@@ -382,6 +382,29 @@ void QueueContext::sleep_in_present() {
     last_gpu_work->get_time_spinlock(now + wait_time);
 
     frame.cpu_post_present_time = std::chrono::steady_clock::now();
+
+    std::ofstream f("/tmp/times.txt", std::ios::trunc);
+    f << "    expected gputime: ";
+    debug_log_time2(f, expected_gputime);
+    f << "    expected cputime: ";
+    debug_log_time2(f, expected_cputime);
+    f << "    requestd sleep: ";
+    debug_log_time2(f, wait_time);
+    f << "    observed sleep: ";
+    debug_log_time2(f, frame.cpu_post_present_time - now);
+}
+
+bool QueueContext::should_inject_timestamps() const {
+    const auto& pd = this->device_context.physical_device;
+
+    assert(pd.queue_properties);
+    const auto& queue_props = *pd.queue_properties;
+    assert(this->queue_family_index < std::size(queue_props));
+
+    const auto& props = queue_props[this->queue_family_index];
+    // Probably need at least 64, don't worry about it just yet and just ensure
+    // it's not zero (because that will cause a crash if we inject).
+    return props.queueFamilyProperties.timestampValidBits;
 }
 
 } // namespace low_latency

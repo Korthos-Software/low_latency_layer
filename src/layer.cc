@@ -92,6 +92,7 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     INSTANCE_VTABLE_LOAD(GetInstanceProcAddr);
     INSTANCE_VTABLE_LOAD(CreateDevice);
     INSTANCE_VTABLE_LOAD(EnumerateDeviceExtensionProperties);
+    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceQueueFamilyProperties2);
 #undef INSTANCE_VTABLE_LOAD
 
     const auto lock = std::scoped_lock{layer_context.mutex};
@@ -384,7 +385,7 @@ static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(
     if (!queue || !*queue) {
         return;
     }
-
+    
     const auto key = layer_context.get_key(*queue);
     const auto lock = std::scoped_lock{layer_context.mutex};
     const auto [it, inserted] = layer_context.contexts.try_emplace(key);
@@ -441,6 +442,10 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     const auto& vtable = queue_context->device_context.vtable;
 
     if (!submit_count) { // no-op submit we shouldn't worry about
+        return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
+    }
+    
+    if (!queue_context->should_inject_timestamps()) {
         return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
     }
 
@@ -524,6 +529,10 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     const auto& vtable = queue_context->device_context.vtable;
 
     if (!submit_count) {
+        return vtable.QueueSubmit2(queue, submit_count, submit_infos, fence);
+    }
+
+    if (!queue_context->should_inject_timestamps()) {
         return vtable.QueueSubmit2(queue, submit_count, submit_infos, fence);
     }
 
