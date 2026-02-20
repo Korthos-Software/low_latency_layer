@@ -547,6 +547,8 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
             head_handle->setup_command_buffers(*tail_handle, *queue_context);
             queue_context->notify_submit(submit, head_handle, tail_handle, now);
 
+            handles.emplace_back(head_handle);
+            handles.emplace_back(tail_handle);
             next_cbs.emplace_back([&]() -> auto {
                 auto cbs = std::make_unique<cbs_t>();
                 cbs->push_back(VkCommandBufferSubmitInfo{
