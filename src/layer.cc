@@ -536,7 +536,7 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     auto next_submits = std::vector<VkSubmitInfo2>{};
     auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
-    
+
     const auto now = std::chrono::steady_clock::now();
 
     std::ranges::transform(
@@ -549,8 +549,6 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
 
             next_cbs.emplace_back([&]() -> auto {
                 auto cbs = std::make_unique<cbs_t>();
-                head_handle->setup_command_buffers(*tail_handle,
-                                                   *queue_context);
                 cbs->push_back(VkCommandBufferSubmitInfo{
                     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
                     .commandBuffer = head_handle->command_buffer,
