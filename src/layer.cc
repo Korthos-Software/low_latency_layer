@@ -220,7 +220,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         const auto wanted_extensions = {
             VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
             VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME,
-            VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
             VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME};
 
         for (const auto& wanted : wanted_extensions) {
