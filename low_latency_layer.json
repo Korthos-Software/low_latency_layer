@@ -6,7 +6,7 @@
         "library_path": "./libVkLayer_NJ3AHXAC_LowLatency.so",
         "api_version": "1.3.0",
         "implementation_version": "1",
-        "description": "WIP Sample layer from https://renderdoc.org/vulkan-layer-guide.html",
+        "description": "Input latency reduction layer",
         "functions": {
             "vkGetInstanceProcAddr": "LowLatency_GetInstanceProcAddr",
             "vkGetDeviceProcAddr": "LowLatency_GetDeviceProcAddr"
@@ -16,6 +16,15 @@
         },
         "disable_environment": {
             "DISABLE_LOW_LATENCY_LAYER": "1"
-        }
+        },
+        "device_extensions": [
+            {
+                "name": "VK_AMD_anti_lag",
+                "spec_version": "1",
+                "entrypoints": [
+                    "vkAntiLagUpdateAMD"
+                ]
+            }
+        ]
     }
 }

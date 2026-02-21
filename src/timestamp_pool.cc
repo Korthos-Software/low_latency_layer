@@ -4,7 +4,6 @@
 
 #include <chrono>
 #include <ranges>
-#include <thread>
 #include <vulkan/utility/vk_dispatch_table.h>
 #include <vulkan/vulkan_core.h>
 

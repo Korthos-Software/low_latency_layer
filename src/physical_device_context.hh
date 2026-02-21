@@ -15,10 +15,10 @@ class PhysicalDeviceContext final : public Context {
 
     const VkPhysicalDevice physical_device;
     
-    const std::unique_ptr<VkPhysicalDeviceProperties> properties;
+    std::unique_ptr<const VkPhysicalDeviceProperties> properties;
     
     using queue_properties_t = std::vector<VkQueueFamilyProperties2>;
-    const std::unique_ptr<queue_properties_t> queue_properties;
+    std::unique_ptr<const queue_properties_t> queue_properties;
 
   public:
     PhysicalDeviceContext(InstanceContext& instance_context,

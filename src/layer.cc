@@ -1,5 +1,6 @@
 #include "layer.hh"
 
+#include <iostream>
 #include <span>
 #include <string_view>
 #include <unordered_map>
@@ -141,16 +142,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumeratePhysicalDevices(
     }
 
     const auto lock = std::scoped_lock{layer_context.mutex};
-    const auto C = *count;
-    for (auto i = std::uint32_t{0}; i < C; ++i) {
-        const auto& device = devices[i];
-
+    for (const auto& device : std::span{devices, *count}) {
         const auto key = layer_context.get_key(device);
-        const auto [it, inserted] =
+        const auto [iter, inserted] =
             layer_context.contexts.try_emplace(key, nullptr);
 
         if (inserted) {
-            it->second =
+            iter->second =
                 std::make_shared<PhysicalDeviceContext>(*context, device);
         }
     }
@@ -385,7 +383,7 @@ static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(
     if (!queue || !*queue) {
         return;
     }
-    
+
     const auto key = layer_context.get_key(*queue);
     const auto lock = std::scoped_lock{layer_context.mutex};
     const auto [it, inserted] = layer_context.contexts.try_emplace(key);
@@ -444,7 +442,7 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     if (!submit_count) { // no-op submit we shouldn't worry about
         return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
     }
-    
+
     if (!queue_context->should_inject_timestamps()) {
         return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
     }
@@ -607,6 +605,50 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
     return VK_SUCCESS;
 }
 
+static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
+    VkPhysicalDevice physical_device, const char* pLayerName,
+    std::uint32_t* pPropertyCount, VkExtensionProperties* pProperties) {
+
+    const auto physical_context = layer_context.get_context(physical_device);
+    const auto& instance = physical_context->instance;
+    const auto& vtable = instance.vtable;
+
+    // Not asking about our layer - just forward it.
+    if (!pLayerName || std::string_view{pLayerName} != LAYER_NAME) {
+        return vtable.EnumerateDeviceExtensionProperties(
+            physical_device, pLayerName, pPropertyCount, pProperties);
+    }
+
+    // !pProperties means they're querying how much space they need.
+    if (!pProperties) {
+        *pPropertyCount = 1;
+        return VK_SUCCESS;
+    }
+
+    auto& count = *pPropertyCount;
+    // Defensive - they gave us zero space to work with.
+    if (!count) {
+        return VK_INCOMPLETE;
+    }
+
+    pProperties[0] =
+        VkExtensionProperties{.extensionName = VK_AMD_ANTI_LAG_EXTENSION_NAME,
+                              .specVersion = VK_AMD_ANTI_LAG_SPEC_VERSION};
+    count = 1;
+
+    return VK_SUCCESS;
+}
+
+static VKAPI_ATTR void VKAPI_CALL
+AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
+    std::cerr << "low_latency::AntiLagUpdateAMD\n";
+    std::cerr << "    maxFPS: " << pData->maxFPS << '\n';
+    std::cerr << "    mode: " << pData->mode << '\n';
+    std::cerr << "    pPresentInfo: " << pData->pPresentationInfo->frameIndex << '\n';
+    std::cerr << "        frameIndex: " << pData->pPresentationInfo->frameIndex << '\n';
+    std::cerr << "        stage: " << pData->pPresentationInfo->stage << '\n';
+}
+
 } // namespace low_latency
 
 using func_map_t = std::unordered_map<std::string_view, PFN_vkVoidFunction>;
@@ -623,7 +665,11 @@ static const auto instance_functions = func_map_t{
 
     HOOK_ENTRY("vkCreateInstance", low_latency::CreateInstance),
     HOOK_ENTRY("vkDestroyInstance", low_latency::DestroyInstance),
+
+    HOOK_ENTRY("vkEnumerateDeviceExtensionProperties",
+               low_latency::EnumerateDeviceExtensionProperties),
 };
+
 static const auto device_functions = func_map_t{
     HOOK_ENTRY("vkGetDeviceProcAddr", LowLatency_GetDeviceProcAddr),
 
@@ -640,6 +686,8 @@ static const auto device_functions = func_map_t{
 
     HOOK_ENTRY("vkAcquireNextImageKHR", low_latency::vkAcquireNextImageKHR),
     HOOK_ENTRY("vkAcquireNextImage2KHR", low_latency::vkAcquireNextImage2KHR),
+
+    HOOK_ENTRY("vkAntiLagUpdateAMD", low_latency::AntiLagUpdateAMD),
 };
 #undef HOOK_ENTRY
 
