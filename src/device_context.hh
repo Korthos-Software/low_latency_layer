@@ -39,11 +39,9 @@ struct DeviceContext final : public Context {
         const DeviceContext& device;
 
       public:
-        time_point_t cpu_time;
+        std::uint64_t host_ns;
         std::uint64_t error_bound;
         std::uint64_t device_ticks;
-        std::uint64_t host_ns;
-        std::uint64_t ticks_per_ns;
 
       public:
         Clock(const DeviceContext& device);

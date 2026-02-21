@@ -52,33 +52,39 @@ void DeviceContext::Clock::calibrate() {
         std::uint64_t host;
     };
     auto calibrated_result = CalibratedResult{};
-
-    const auto steady_before = std::chrono::steady_clock::now();
     device.vtable.GetCalibratedTimestampsKHR(device.device, 2, std::data(infos),
                                              &calibrated_result.device,
                                              &this->error_bound);
-    const auto steady_after = std::chrono::steady_clock::now();
-
-    this->cpu_time = steady_before + (steady_after - steady_before) / 2;
     this->device_ticks = calibrated_result.device;
     this->host_ns = calibrated_result.host;
-
-    // Might need to get physical limits every now and then?
-    const auto& pd = device.physical_device.properties;
-    this->ticks_per_ns = pd->limits.timestampPeriod;
 }
 
 DeviceContext::Clock::time_point_t
 DeviceContext::Clock::ticks_to_time(const std::uint64_t& ticks) const {
-    auto a = this->device_ticks;
-    auto b = ticks;
-    const auto was_before = a > b;
-    if (was_before) { // it's happened before
-        std::swap(a, b);
-    }
+    const auto& pd = device.physical_device.properties;
+    const auto ns_tick = static_cast<double>(pd->limits.timestampPeriod);
+    
+    const auto diff = [&]() -> auto {
+        auto a = this->device_ticks;
+        auto b = ticks;
+        const auto is_negative = a > b;
+        if (is_negative) {
+            std::swap(a, b);
+        }
+        const auto abs_diff = b - a;
+        assert(abs_diff <= std::numeric_limits<std::int64_t>::max());
+        const auto signed_abs_diff = static_cast<std::int64_t>(abs_diff);
+        return is_negative ? -signed_abs_diff : signed_abs_diff;
+    }();
+    
+    // This will have issues because std::chrono::steady_clock::now(), which
+    // we use for cpu time, may not be on the same time domain what was returned
+    // by GetCalibratedTimestamps. It would be more robust to use the posix
+    // gettime that vulkan guarantees it can be compared to instead.
 
-    const auto nsec = std::chrono::nanoseconds((b - a) * this->ticks_per_ns);
-    return this->cpu_time + (was_before ? -nsec : nsec);
+    const auto diff_nsec = static_cast<std::int64_t>(diff * ns_tick + 0.5);
+    const auto delta = std::chrono::nanoseconds(this->host_ns + diff_nsec);
+    return time_point_t{delta};
 }
 
 } // namespace low_latency
