@@ -71,7 +71,7 @@ struct LayerContext final : public Context {
         assert(it != std::end(this->contexts));
 
         using context_t = dispatch_context_t<DT>;
-        auto ptr = std::dynamic_pointer_cast<context_t>(it->second);
+        const auto ptr = std::dynamic_pointer_cast<context_t>(it->second);
         assert(ptr);
         return ptr;
     }

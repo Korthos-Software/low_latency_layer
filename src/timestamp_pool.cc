@@ -153,30 +153,19 @@ TimestampPool::Handle::get_time() {
 std::optional<DeviceContext::Clock::time_point_t>
 TimestampPool::Handle::get_time_spinlock(
     const DeviceContext::Clock::time_point_t& until) {
-    
+
     auto time = this->get_time();
-    if (time.has_value()) { // fast path, avoid now().
-        return time;
-    }
-    
-    auto last = std::chrono::steady_clock::now();
     for (; !time.has_value(); time = this->get_time()) {
-        
         if (const auto now = std::chrono::steady_clock::now(); now >= until) {
             break;
         }
-        
-        // Afaik no-op if it's too far behind, which is ideal.
-        std::this_thread::sleep_until(std::min(last + this->SPINLOCK_MAX_DELAY, until));
-
-        last = std::chrono::steady_clock::now();
     }
-            
     return time;
 }
 
 DeviceContext::Clock::time_point_t TimestampPool::Handle::get_time_spinlock() {
-    const auto time = this->get_time_spinlock(DeviceContext::Clock::time_point_t::max());
+    constexpr auto max = DeviceContext::Clock::time_point_t::max();
+    const auto time = this->get_time_spinlock(max);
     assert(time.has_value());
     return *time;
 }

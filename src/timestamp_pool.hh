@@ -60,11 +60,6 @@ class TimestampPool final {
         friend class TimestampPool;
 
       private:
-        // For our spinlock functions this is the period in which we sleep
-        // between attempts.
-        static constexpr auto SPINLOCK_MAX_DELAY = std::chrono::microseconds(1);
-
-      private:
         const TimestampPool& timestamp_pool;
         const std::weak_ptr<QueryChunk> origin_chunk;
 
