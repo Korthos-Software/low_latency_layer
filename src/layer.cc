@@ -28,22 +28,42 @@ LayerContext layer_context;
 
 } // namespace
 
-template <typename T, typename sType, typename fType>
-static T* get_link_info(const void* const head, const sType& stype,
-                        const fType& ftype) {
+template <typename T>
+static T* find_next(void* const head, const VkStructureType& stype) {
+    for (auto i = reinterpret_cast<VkBaseOutStructure*>(head); i;
+         i = i->pNext) {
+
+        if (i->sType != stype) {
+            continue;
+        }
+        return reinterpret_cast<T*>(i);
+    }
+    return nullptr;
+}
+
+template <typename T>
+static const T* find_next(const void* const head,
+                          const VkStructureType& stype) {
     for (auto i = reinterpret_cast<const VkBaseInStructure*>(head); i;
          i = i->pNext) {
 
         if (i->sType != stype) {
             continue;
         }
+        return reinterpret_cast<const T*>(i);
+    }
+    return nullptr;
+}
 
-        const auto info = reinterpret_cast<const T*>(i);
-        if (info->function != ftype) {
+template <typename T>
+static const T* find_link(const void* head, const VkStructureType& stype) {
+    for (auto info = find_next<T>(head, stype); info;
+         info = find_next<T>(info->pNext, stype)) {
+
+        if (info->function != VK_LAYER_LINK_INFO) {
             continue;
         }
-
-        return const_cast<T*>(info);
+        return reinterpret_cast<const T*>(info);
     }
     return nullptr;
 }
@@ -52,9 +72,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL
 CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
                const VkAllocationCallbacks* pAllocator, VkInstance* pInstance) {
 
-    const auto link_info = get_link_info<VkLayerInstanceCreateInfo>(
-        pCreateInfo->pNext, VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO,
-        VK_LAYER_LINK_INFO);
+    const auto link_info = find_link<VkLayerInstanceCreateInfo>(
+        pCreateInfo->pNext, VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO);
 
     if (!link_info || !link_info->u.pLayerInfo) {
         return VK_ERROR_INITIALIZATION_FAILED;
@@ -66,7 +85,8 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     if (!gipa) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    link_info->u.pLayerInfo = link_info->u.pLayerInfo->pNext;
+    const_cast<VkLayerInstanceCreateInfo*>(link_info)->u.pLayerInfo =
+        link_info->u.pLayerInfo->pNext;
 
     // Call our create instance func, and store vkDestroyInstance, and
     // vkCreateDevice as well.
@@ -94,6 +114,7 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     INSTANCE_VTABLE_LOAD(CreateDevice);
     INSTANCE_VTABLE_LOAD(EnumerateDeviceExtensionProperties);
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceQueueFamilyProperties2);
+    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceFeatures2);
 #undef INSTANCE_VTABLE_LOAD
 
     const auto lock = std::scoped_lock{layer_context.mutex};
@@ -160,17 +181,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     VkPhysicalDevice physical_device, const VkDeviceCreateInfo* pCreateInfo,
     const VkAllocationCallbacks* pAllocator, VkDevice* pDevice) {
 
-    const auto create_info = get_link_info<VkLayerDeviceCreateInfo>(
-        pCreateInfo->pNext, VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
-        VK_LAYER_LINK_INFO);
+    const auto create_info = find_link<VkLayerDeviceCreateInfo>(
+        pCreateInfo->pNext, VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO);
     if (!create_info || !create_info->u.pLayerInfo) {
-        return VK_ERROR_INITIALIZATION_FAILED;
-    }
-
-    const auto callback_info = get_link_info<VkLayerDeviceCreateInfo>(
-        pCreateInfo->pNext, VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
-        VK_LOADER_DATA_CALLBACK);
-    if (!callback_info || !callback_info->u.pLayerInfo) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
@@ -179,7 +192,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     if (!gipa || !gdpa) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    create_info->u.pLayerInfo = create_info->u.pLayerInfo->pNext;
+    const_cast<VkLayerDeviceCreateInfo*>(create_info)->u.pLayerInfo =
+        create_info->u.pLayerInfo->pNext;
 
     const auto physical_device_context =
         layer_context.get_context(physical_device);
@@ -639,13 +653,38 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
     return VK_SUCCESS;
 }
 
+static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
+    VkPhysicalDevice physical_device, VkPhysicalDeviceFeatures2* pFeatures) {
+
+    const auto physical_context = layer_context.get_context(physical_device);
+    const auto& vtable = physical_context->instance.vtable;
+
+    vtable.GetPhysicalDeviceFeatures2(physical_device, pFeatures);
+
+    if (const auto feature = find_next<VkPhysicalDeviceAntiLagFeaturesAMD>(
+            pFeatures->pNext,
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD);
+        feature) {
+
+        feature->antiLag = true;
+    }
+}
+
+static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2KHR(
+    VkPhysicalDevice physical_device, VkPhysicalDeviceFeatures2KHR* pFeatures) {
+    // forward
+    return low_latency::GetPhysicalDeviceFeatures2(physical_device, pFeatures);
+}
+
 static VKAPI_ATTR void VKAPI_CALL
 AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     std::cerr << "low_latency::AntiLagUpdateAMD\n";
     std::cerr << "    maxFPS: " << pData->maxFPS << '\n';
     std::cerr << "    mode: " << pData->mode << '\n';
-    std::cerr << "    pPresentInfo: " << pData->pPresentationInfo->frameIndex << '\n';
-    std::cerr << "        frameIndex: " << pData->pPresentationInfo->frameIndex << '\n';
+    std::cerr << "    pPresentInfo: " << pData->pPresentationInfo->frameIndex
+              << '\n';
+    std::cerr << "        frameIndex: " << pData->pPresentationInfo->frameIndex
+              << '\n';
     std::cerr << "        stage: " << pData->pPresentationInfo->stage << '\n';
 }
 
@@ -668,6 +707,11 @@ static const auto instance_functions = func_map_t{
 
     HOOK_ENTRY("vkEnumerateDeviceExtensionProperties",
                low_latency::EnumerateDeviceExtensionProperties),
+
+    HOOK_ENTRY("vkGetPhysicalDeviceFeatures2",
+               low_latency::GetPhysicalDeviceFeatures2),
+    HOOK_ENTRY("vkGetPhysicalDeviceFeatures2KHR",
+               low_latency::GetPhysicalDeviceFeatures2KHR),
 };
 
 static const auto device_functions = func_map_t{
