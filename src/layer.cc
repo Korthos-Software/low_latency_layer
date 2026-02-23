@@ -56,7 +56,8 @@ static const T* find_next(const void* const head,
 }
 
 template <typename T>
-static const T* find_link(const void* head, const VkStructureType& stype) {
+static const T* find_link(const void* const head,
+                          const VkStructureType& stype) {
     for (auto info = find_next<T>(head, stype); info;
          info = find_next<T>(info->pNext, stype)) {
 
@@ -610,11 +611,7 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
         return res;
     }
 
-    if (present_info) { // might not be needed
-        queue_context->notify_present(*present_info);
-    }
-
-    queue_context->sleep_in_present();
+    queue_context->notify_present(*present_info);
 
     return VK_SUCCESS;
 }
@@ -633,13 +630,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
             physical_device, pLayerName, pPropertyCount, pProperties);
     }
 
+    auto& count = *pPropertyCount;
     // !pProperties means they're querying how much space they need.
     if (!pProperties) {
-        *pPropertyCount = 1;
+        count = 1;
         return VK_SUCCESS;
     }
 
-    auto& count = *pPropertyCount;
     // Defensive - they gave us zero space to work with.
     if (!count) {
         return VK_INCOMPLETE;
@@ -678,14 +675,8 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2KHR(
 
 static VKAPI_ATTR void VKAPI_CALL
 AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
-    std::cerr << "low_latency::AntiLagUpdateAMD\n";
-    std::cerr << "    maxFPS: " << pData->maxFPS << '\n';
-    std::cerr << "    mode: " << pData->mode << '\n';
-    std::cerr << "    pPresentInfo: " << pData->pPresentationInfo->frameIndex
-              << '\n';
-    std::cerr << "        frameIndex: " << pData->pPresentationInfo->frameIndex
-              << '\n';
-    std::cerr << "        stage: " << pData->pPresentationInfo->stage << '\n';
+    const auto device_context = layer_context.get_context(device);
+    device_context->notify_antilag_update(*pData);
 }
 
 } // namespace low_latency

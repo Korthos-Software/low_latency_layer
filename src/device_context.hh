@@ -2,6 +2,7 @@
 #define DEVICE_CONTEXT_HH_
 
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <unordered_map>
 
@@ -53,6 +54,16 @@ struct DeviceContext final : public Context {
     };
     Clock clock;
 
+    
+    std::uint32_t antilag_fps = 0;
+    VkAntiLagModeAMD antilag_mode = VK_ANTI_LAG_MODE_DRIVER_CONTROL_AMD;
+
+    // The queue used in the last present.
+    std::shared_ptr<QueueContext> present_queue;
+
+  private:
+    void sleep_in_input();
+
   public:
     DeviceContext(InstanceContext& parent_instance,
                   PhysicalDeviceContext& parent_physical,
@@ -63,6 +74,11 @@ struct DeviceContext final : public Context {
     void notify_acquire(const VkSwapchainKHR& swapchain,
                         const std::uint32_t& image_index,
                         const VkSemaphore& signal_semaphore);
+
+    // 
+    void notify_antilag_update(const VkAntiLagDataAMD& data);
+    
+    void notify_queue_present(const QueueContext& queue);
 };
 
 }; // namespace low_latency

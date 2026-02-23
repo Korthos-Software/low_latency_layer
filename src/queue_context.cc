@@ -8,6 +8,7 @@
 #include <iostream>
 #include <ranges>
 #include <span>
+#include <vulkan/vulkan_core.h>
 
 namespace low_latency {
 
@@ -62,6 +63,7 @@ void QueueContext::notify_submit(
         std::span{info.pSignalSemaphores, info.signalSemaphoreCount},
         std::inserter(signals, std::end(signals)));
 
+    /*
     std::cerr << "submit1 notif for queue " << this->queue << '\n';
     std::cerr << "    signals: \n";
     for (const auto& signal : signals) {
@@ -71,6 +73,7 @@ void QueueContext::notify_submit(
     for (const auto& wait : waits) {
         std::cerr << "      " << wait << '\n';
     }
+    */
 
     this->submissions.emplace_back(std::make_unique<Submission>(
         std::move(signals), std::move(waits), head_handle, tail_handle, now));
@@ -100,6 +103,7 @@ void QueueContext::notify_submit(
         std::inserter(signals, std::end(signals)),
         [](const auto& info) -> auto { return info.semaphore; });
 
+    /*
     std::cerr << "submit2 notif for queue " << this->queue << '\n';
     std::cerr << "    signals: \n";
     for (const auto& signal : signals) {
@@ -109,6 +113,7 @@ void QueueContext::notify_submit(
     for (const auto& wait : waits) {
         std::cerr << "      " << wait << '\n';
     }
+    */
 
     this->submissions.emplace_back(std::make_unique<Submission>(
         std::move(signals), std::move(waits), head_handle, tail_handle, now));
@@ -119,7 +124,7 @@ void QueueContext::notify_submit(
     }
 }
 
-void QueueContext::notify_present(const VkPresentInfoKHR& info) {
+void QueueContext::drain_submissions_to_frame() {
 
     // We are going to assume that all queue submissions before and on the same
     // queue contribute to the frame.
@@ -138,9 +143,6 @@ void QueueContext::notify_present(const VkPresentInfoKHR& info) {
         return;
     }
     const auto last_iter = std::prev(std::end(this->submissions));
-
-    (*start_iter)->debug += "first_during_present ";
-    (*last_iter)->debug += "last_during_present ";
 
     // The last submission is either in flight, already processed, or we
     // just happen to be the first frame and we can just set it to our start
@@ -173,6 +175,22 @@ void QueueContext::notify_present(const VkPresentInfoKHR& info) {
     this->submissions.clear();
 }
 
+void QueueContext::notify_present(const VkPresentInfoKHR& info) {
+    this->drain_submissions_to_frame();
+    this->drain_frames_to_timings();
+
+    // Call up to notify the device now that we're done with this frame.
+    // We have to do this because antilag 2 data is sent to the device, not
+    // any particular queue.
+    this->device_context.notify_queue_present(*this);
+
+    // If antilag is on, the sleep will occur in notify_antilag_update at the
+    // device context.
+    if (this->device_context.antilag_mode != VK_ANTI_LAG_MODE_ON_AMD) {
+        this->sleep_in_present();
+    }
+}
+
 const auto debug_log_time2 = [](auto& stream, const auto& diff) {
     using namespace std::chrono;
     const auto ms = duration_cast<milliseconds>(diff);
@@ -185,7 +203,7 @@ const auto debug_log_time = [](const auto& diff) {
     debug_log_time2(std::cerr, diff);
 };
 
-void QueueContext::process_frames() {
+void QueueContext::drain_frames_to_timings() {
     if (!std::size(this->in_flight_frames)) {
         return;
     }
@@ -201,9 +219,9 @@ void QueueContext::process_frames() {
     while (std::size(this->in_flight_frames)) {
         const auto& frame = this->in_flight_frames.front();
 
-        // There should be at least one submission, we guarantee it in
-        // notify_present.
-        assert(std::size(frame.submissions));
+        if (!std::size(frame.submissions)) {
+            break;
+        }
 
         const auto& last_submission = frame.submissions.back();
 
@@ -320,7 +338,7 @@ void QueueContext::sleep_in_present() {
     // Call this to push all in flight frames into our timings structure,
     // but only if they're completed. So now they are truly *in flight
     // frames*.
-    this->process_frames();
+    this->drain_frames_to_timings();
 
     if (!std::size(this->in_flight_frames)) {
         return;
@@ -335,9 +353,9 @@ void QueueContext::sleep_in_present() {
         return first_submission->start_handle->get_time_spinlock();
     }();
 
-    // Process frames because as stated above, we might have multiple frames
-    // now completed.
-    this->process_frames();
+    // Drain frames again because as stated above, we might have multiple frames
+    // now completed after our wait spinlock.
+    this->drain_frames_to_timings();
 
     // Check the size again because the frame we want to target may have already
     // completed when we called process_frames().

@@ -26,7 +26,7 @@ class QueueContext final : public Context {
 
     std::unique_ptr<TimestampPool> timestamp_pool;
 
-  private:
+  public:
     static constexpr auto MAX_TRACKED_TIMINGS = 50;
 
     // Potentially in flight queue submissions that come from this queue.
@@ -38,8 +38,6 @@ class QueueContext final : public Context {
         const std::shared_ptr<TimestampPool::Handle> end_handle;
         
         const DeviceContext::Clock::time_point_t enqueued_time;
-
-        std::string debug;
     };
     using submission_ptr_t = std::shared_ptr<Submission>;
     std::deque<submission_ptr_t> submissions;
@@ -67,7 +65,15 @@ class QueueContext final : public Context {
     std::deque<std::unique_ptr<Timing>> timings;
 
   private:
-    void process_frames();
+    // Drains submissions and promotes them into a single frame object.
+    void drain_submissions_to_frame();
+    
+    // Drains in flight frames and promotes them into a Timing object if they
+    // have completed.
+    void drain_frames_to_timings();
+    
+    // Antilag 1 equivalent where we sleep after present to reduce queueing.
+    void sleep_in_present();
 
   public:
     QueueContext(DeviceContext& device_context, const VkQueue& queue,
@@ -86,9 +92,6 @@ class QueueContext final : public Context {
                        const DeviceContext::Clock::time_point_t& now);
 
     void notify_present(const VkPresentInfoKHR& info);
-
-  public:
-    void sleep_in_present();
     
   public:
     bool should_inject_timestamps() const;
