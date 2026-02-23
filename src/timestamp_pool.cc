@@ -3,8 +3,8 @@
 #include "queue_context.hh"
 
 #include <chrono>
-#include <span>
 #include <ranges>
+#include <span>
 #include <vulkan/utility/vk_dispatch_table.h>
 #include <vulkan/vulkan_core.h>
 
@@ -25,8 +25,10 @@ TimestampPool::QueryChunk::QueryChunk(const QueueContext& queue_context) {
         return qp;
     }();
 
-    constexpr auto KEY_RANGE = std::views::iota(0u, QueryChunk::CHUNK_SIZE);
-    this->free_indices = std::make_unique<free_indices_t>(std::from_range, KEY_RANGE);
+    this->free_indices = []() {
+        constexpr auto KEYS = std::views::iota(0u, QueryChunk::CHUNK_SIZE);
+        return std::make_unique<free_indices_t>(std::from_range, KEYS);
+    }();
 
     this->command_buffers = [&, this]() -> auto {
         auto cbs = std::make_unique<std::vector<VkCommandBuffer>>(CHUNK_SIZE);

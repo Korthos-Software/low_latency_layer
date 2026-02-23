@@ -2,7 +2,6 @@
 #define DEVICE_CONTEXT_HH_
 
 #include <chrono>
-#include <deque>
 #include <memory>
 #include <unordered_map>
 
@@ -30,6 +29,8 @@ struct DeviceContext final : public Context {
     std::unordered_map<VkQueue, std::shared_ptr<QueueContext>> queues;
 
     // We map swapchains to image indexes and their last signalled semaphore.
+    // FIXME: This isn't used right now, it was formerly used to map queue
+    // submissions but it ended up being unnecessary complexity.
     using index_semaphores_t = std::unordered_map<std::uint32_t, VkSemaphore>;
     std::unordered_map<VkSwapchainKHR, index_semaphores_t> swapchain_signals;
 
@@ -54,7 +55,6 @@ struct DeviceContext final : public Context {
     };
     Clock clock;
 
-    
     std::uint32_t antilag_fps = 0;
     VkAntiLagModeAMD antilag_mode = VK_ANTI_LAG_MODE_DRIVER_CONTROL_AMD;
 
@@ -75,9 +75,9 @@ struct DeviceContext final : public Context {
                         const std::uint32_t& image_index,
                         const VkSemaphore& signal_semaphore);
 
-    // 
+    //
     void notify_antilag_update(const VkAntiLagDataAMD& data);
-    
+
     void notify_queue_present(const QueueContext& queue);
 };
 

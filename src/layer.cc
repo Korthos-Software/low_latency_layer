@@ -1,6 +1,5 @@
 #include "layer.hh"
 
-#include <iostream>
 #include <span>
 #include <string_view>
 #include <unordered_map>
@@ -302,8 +301,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     DEVICE_VTABLE_LOAD(BeginCommandBuffer);
     DEVICE_VTABLE_LOAD(EndCommandBuffer);
     DEVICE_VTABLE_LOAD(ResetCommandBuffer);
-    DEVICE_VTABLE_LOAD(CmdDraw);
-    DEVICE_VTABLE_LOAD(CmdDrawIndexed);
     DEVICE_VTABLE_LOAD(CmdResetQueryPool);
     DEVICE_VTABLE_LOAD(GetDeviceQueue2);
     DEVICE_VTABLE_LOAD(QueueSubmit2);
@@ -387,8 +384,7 @@ GetDeviceQueue(VkDevice device, std::uint32_t queue_family_index,
     device_context->queues.emplace(*queue, ptr);
 }
 
-// Identical logic to gdq so some amount of duplication, we can't assume gdq1 is
-// available apparently, what do I know?
+// Identical logic to gdq1.
 static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(
     VkDevice device, const VkDeviceQueueInfo2* info, VkQueue* queue) {
 
@@ -454,11 +450,7 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     const auto& queue_context = layer_context.get_context(queue);
     const auto& vtable = queue_context->device_context.vtable;
 
-    if (!submit_count) { // no-op submit we shouldn't worry about
-        return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
-    }
-
-    if (!queue_context->should_inject_timestamps()) {
+    if (!submit_count || !queue_context->should_inject_timestamps()) { 
         return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
     }
 
@@ -476,17 +468,15 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     //        alone.
     //     2. Semaphores only signal at the end of their work, so we cannot use
     //        them as a mechanism to know if work has started without doing
-    //        another dummy submission. This adds complexity and also skews our
-    //        timestamps slightly.
-    //     3. Semaphores can be waited which sounds nice in theory, but in my
-    //        own testing waiting on semaphores can cause scheduling issues and
-    //        cause wakeups as late as 1ms from when it was signalled, which is
-    //        unbelievably bad if we're trying to do frame pacing. This means
-    //        we are going to have to do a spinlock poll anyway.
-    //     4. Guess what info we need? Timestamp information. Guess what
-    //        supports polling of an availability bit? Timestamp information.
-    //        Why bother with semaphores at all then? Polling a semaphore might
-    //        be faster, but the difference appears to be negligible.
+    //        another dummy submission. This adds complexity and also might
+    //        skew our timestamps slightly as they wouldn't be a part of the
+    //        submission which contained those command buffers.
+    //     3. Timestamps support querying if their work has started/ended
+    //        as long as we use the vkHostQueryReset extension to reset them
+    //        before we consider them queryable. This means we don't need a
+    //        'is it valid to query' timeline semaphore.
+    //     4. The performance impact of using semaphores vs timestamps is
+    //        negligable. 
 
     using cbs_t = std::vector<VkCommandBuffer>;
     auto next_submits = std::vector<VkSubmitInfo>{};
@@ -541,11 +531,7 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     const auto& queue_context = layer_context.get_context(queue);
     const auto& vtable = queue_context->device_context.vtable;
 
-    if (!submit_count) {
-        return vtable.QueueSubmit2(queue, submit_count, submit_infos, fence);
-    }
-
-    if (!queue_context->should_inject_timestamps()) {
+    if (!submit_count || !queue_context->should_inject_timestamps()) {
         return vtable.QueueSubmit2(queue, submit_count, submit_infos, fence);
     }
 

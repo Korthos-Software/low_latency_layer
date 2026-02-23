@@ -12,31 +12,29 @@
 
 namespace low_latency {
 
-static VkCommandPool
-make_command_pool(const DeviceContext& device_context,
-                  const std::uint32_t& queue_family_index) {
-
-    const auto cpci = VkCommandPoolCreateInfo{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
-                 VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = queue_family_index,
-    };
-
-    auto command_pool = VkCommandPool{};
-    device_context.vtable.CreateCommandPool(device_context.device, &cpci,
-                                            nullptr, &command_pool);
-    return command_pool;
-}
-
 QueueContext::QueueContext(DeviceContext& device_context, const VkQueue& queue,
                            const std::uint32_t& queue_family_index)
     : device_context(device_context), queue(queue),
-      queue_family_index(queue_family_index),
-      // Important we make the command pool before the timestamp pool, because
-      // it's a dependency.
-      command_pool(make_command_pool(device_context, queue_family_index)),
-      timestamp_pool(std::make_unique<TimestampPool>(*this)) {}
+      queue_family_index(queue_family_index) {
+
+    // Important we make the command pool before the timestamp pool, because
+    // it's a dependency.
+    this->command_pool = [&]() {
+        const auto cpci = VkCommandPoolCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
+                     VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .queueFamilyIndex = queue_family_index,
+        };
+
+        auto command_pool = VkCommandPool{};
+        device_context.vtable.CreateCommandPool(device_context.device, &cpci,
+                                                nullptr, &command_pool);
+        return command_pool;
+    }();
+
+    this->timestamp_pool = std::make_unique<TimestampPool>(*this);
+}
 
 QueueContext::~QueueContext() {
 
@@ -63,27 +61,15 @@ void QueueContext::notify_submit(
         std::span{info.pSignalSemaphores, info.signalSemaphoreCount},
         std::inserter(signals, std::end(signals)));
 
-    /*
-    std::cerr << "submit1 notif for queue " << this->queue << '\n';
-    std::cerr << "    signals: \n";
-    for (const auto& signal : signals) {
-        std::cerr << "      " << signal << '\n';
-    }
-    std::cerr << "    waits: \n";
-    for (const auto& wait : waits) {
-        std::cerr << "      " << wait << '\n';
-    }
-    */
-
     this->submissions.emplace_back(std::make_unique<Submission>(
         std::move(signals), std::move(waits), head_handle, tail_handle, now));
 
-    // TODO HACK
-    if (std::size(this->submissions) > 100) {
+    if (std::size(this->submissions) > this->MAX_TRACKED_SUBMISSIONS) {
         this->submissions.pop_front();
     }
 }
 
+// Identical to notify_submit, but we use VkSubmitInfo2.
 void QueueContext::notify_submit(
     const VkSubmitInfo2& info,
     const std::shared_ptr<TimestampPool::Handle> head_handle,
@@ -103,23 +89,10 @@ void QueueContext::notify_submit(
         std::inserter(signals, std::end(signals)),
         [](const auto& info) -> auto { return info.semaphore; });
 
-    /*
-    std::cerr << "submit2 notif for queue " << this->queue << '\n';
-    std::cerr << "    signals: \n";
-    for (const auto& signal : signals) {
-        std::cerr << "      " << signal << '\n';
-    }
-    std::cerr << "    waits: \n";
-    for (const auto& wait : waits) {
-        std::cerr << "      " << wait << '\n';
-    }
-    */
-
     this->submissions.emplace_back(std::make_unique<Submission>(
         std::move(signals), std::move(waits), head_handle, tail_handle, now));
 
-    // TODO HACK
-    if (std::size(this->submissions) > 100) {
+    if (std::size(this->submissions) > this->MAX_TRACKED_SUBMISSIONS) {
         this->submissions.pop_front();
     }
 }
@@ -139,7 +112,6 @@ void QueueContext::drain_submissions_to_frame() {
     const auto start_iter = std::begin(this->submissions);
     // no op submit?
     if (start_iter == std::end(this->submissions)) {
-        std::cerr << "ignored no op submit\n";
         return;
     }
     const auto last_iter = std::prev(std::end(this->submissions));
@@ -208,20 +180,14 @@ void QueueContext::drain_frames_to_timings() {
         return;
     }
 
-    // We used to collect all devices that were pointed to by all potential
-    // submissions, put them in a set and then call.calibrate() on each once.
-    // This is unnecessary now - we assume all submissions come from the same
-    // queue. FIXME: don't assume this.
-    auto& device_context = this->device_context;
-    auto& clock = device_context.clock;
-    clock.calibrate();
+    // Only need to calibrate this device, we don't support multi device anti
+    // lag.
+    this->device_context.clock.calibrate();
 
     while (std::size(this->in_flight_frames)) {
         const auto& frame = this->in_flight_frames.front();
 
-        if (!std::size(frame.submissions)) {
-            break;
-        }
+        assert(std::size(frame.submissions));
 
         const auto& last_submission = frame.submissions.back();
 
@@ -335,11 +301,8 @@ void QueueContext::sleep_in_present() {
     const auto& device = this->device_context;
     const auto& vtable = device.vtable;
 
-    // Call this to push all in flight frames into our timings structure,
-    // but only if they're completed. So now they are truly *in flight
-    // frames*.
+    // After calling this, any remaining frames are truly *in fligh*.
     this->drain_frames_to_timings();
-
     if (!std::size(this->in_flight_frames)) {
         return;
     }

@@ -16,6 +16,21 @@
 namespace low_latency {
 
 class QueueContext final : public Context {
+  private:
+    // The amount of finished frame timing data we keep before eviction.
+    // For now, this value is also the number of data points used in the
+    // calculation of gpu timing information.
+    static constexpr auto MAX_TRACKED_TIMINGS = 50;
+    // The amount of queue submissions we allow tracked per queue before
+    // we give up tracking them. For a queue that is presented to,
+    // these submissions will be constantly moved to Frame structs so
+    // it's not an issue that we only track so many - unless it just 
+    // happens that an application makes an unexpectedly large
+    // amount of vkQueueSubmit's per frame. For queues which don't
+    // present, this limit stops them from growing limitlessly in memory
+    // as we may not necessarily manually evict them yet.
+    static constexpr auto MAX_TRACKED_SUBMISSIONS = 50;
+
   public:
     DeviceContext& device_context;
 
@@ -27,8 +42,6 @@ class QueueContext final : public Context {
     std::unique_ptr<TimestampPool> timestamp_pool;
 
   public:
-    static constexpr auto MAX_TRACKED_TIMINGS = 50;
-
     // Potentially in flight queue submissions that come from this queue.
     struct Submission {
         const std::unordered_set<VkSemaphore> signals;
@@ -36,7 +49,7 @@ class QueueContext final : public Context {
 
         const std::shared_ptr<TimestampPool::Handle> start_handle;
         const std::shared_ptr<TimestampPool::Handle> end_handle;
-        
+
         const DeviceContext::Clock::time_point_t enqueued_time;
     };
     using submission_ptr_t = std::shared_ptr<Submission>;
@@ -50,8 +63,8 @@ class QueueContext final : public Context {
     struct Frame {
         std::deque<submission_ptr_t> submissions;
 
-        // the point that control flow was returned from VkQueuePresentKHR back to the
-        // application. 
+        // the point that control flow was returned from VkQueuePresentKHR back
+        // to the application.
         DeviceContext::Clock::time_point_t cpu_post_present_time;
     };
     std::deque<Frame> in_flight_frames;
@@ -67,11 +80,11 @@ class QueueContext final : public Context {
   private:
     // Drains submissions and promotes them into a single frame object.
     void drain_submissions_to_frame();
-    
+
     // Drains in flight frames and promotes them into a Timing object if they
     // have completed.
     void drain_frames_to_timings();
-    
+
     // Antilag 1 equivalent where we sleep after present to reduce queueing.
     void sleep_in_present();
 
@@ -92,7 +105,7 @@ class QueueContext final : public Context {
                        const DeviceContext::Clock::time_point_t& now);
 
     void notify_present(const VkPresentInfoKHR& info);
-    
+
   public:
     bool should_inject_timestamps() const;
 };
