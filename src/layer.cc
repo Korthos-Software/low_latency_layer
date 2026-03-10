@@ -1,5 +1,6 @@
 #include "layer.hh"
 
+#include <ranges>
 #include <span>
 #include <string_view>
 #include <unordered_map>
@@ -181,6 +182,24 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     VkPhysicalDevice physical_device, const VkDeviceCreateInfo* pCreateInfo,
     const VkAllocationCallbacks* pAllocator, VkDevice* pDevice) {
 
+    // Hook logic after create device looks like this.
+    // !PHYS_SUPPORT &&  AL2_REQUESTED -> return INITIALIZATION_FAILED here.
+    // !PHYS_SUPPORT && !AL2_REQUESTED -> hooks are no-ops
+    //  PHYS_SUPPORT                   -> hooks inject timestamps regardless
+    //                                    because AL1 might be used and it
+    //                                    costs virtually nothing to do.
+    const auto was_antilag_requested = std::ranges::any_of(
+        std::span{pCreateInfo->ppEnabledExtensionNames,
+                  pCreateInfo->enabledExtensionCount},
+        [](const auto& ext) {
+            return std::string_view{ext} == VK_AMD_ANTI_LAG_EXTENSION_NAME;
+        });
+
+    const auto context = layer_context.get_context(physical_device);
+    if (!context->supports_required_extensions && was_antilag_requested) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+
     const auto create_info = find_link<VkLayerDeviceCreateInfo>(
         pCreateInfo->pNext, VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO);
     if (!create_info || !create_info->u.pLayerInfo) {
@@ -195,64 +214,25 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     const_cast<VkLayerDeviceCreateInfo*>(create_info)->u.pLayerInfo =
         create_info->u.pLayerInfo->pNext;
 
-    const auto physical_device_context =
-        layer_context.get_context(physical_device);
-    auto& instance_context = physical_device_context->instance;
+    // Build a next extensions vector from what they have requested.
+    const auto next_extensions = [&]() -> std::vector<const char*> {
+        auto next_extensions = std::span{pCreateInfo->ppEnabledExtensionNames,
+                                         pCreateInfo->enabledExtensionCount} |
+                               std::ranges::to<std::vector>();
 
-    const auto next_extensions =
-        [&]() -> std::optional<std::vector<const char*>> {
-        const auto enumerate_device_extensions =
-            reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
-                gipa(instance_context.instance,
-                     "vkEnumerateDeviceExtensionProperties"));
-        if (!enumerate_device_extensions) {
-            return std::nullopt;
+        // Don't append anything extra if we don't support what we need.
+        if (!context->supports_required_extensions) {
+            return next_extensions;
         }
 
-        auto count = std::uint32_t{};
-        if (enumerate_device_extensions(physical_device, nullptr, &count,
-                                        nullptr) != VK_SUCCESS) {
+        const auto already_requested =
+            next_extensions |
+            std::ranges::to<std::unordered_set<std::string_view>>();
 
-            return std::nullopt;
-        }
-
-        auto supported_extensions = std::vector<VkExtensionProperties>(count);
-        if (enumerate_device_extensions(physical_device, nullptr, &count,
-                                        std::data(supported_extensions)) !=
-            VK_SUCCESS) {
-
-            return std::nullopt;
-        }
-
-        auto next_extensions = std::vector<const char*>{};
-
-        std::ranges::copy(std::span{pCreateInfo->ppEnabledExtensionNames,
-                                    pCreateInfo->enabledExtensionCount},
-                          std::back_inserter(next_extensions));
-
-        const auto wanted_extensions = {
-            VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
-            VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME,
-            VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME};
-
-        for (const auto& wanted : wanted_extensions) {
-
-            if (std::ranges::any_of(
-                    next_extensions, [&](const auto& next_extension) {
-                        return !std::strcmp(next_extension, wanted);
-                    })) {
-
-                continue; // Already included, ignore it.
-            }
-
-            if (std::ranges::none_of(
-                    supported_extensions, [&](const auto& supported_extension) {
-                        return !std::strcmp(supported_extension.extensionName,
-                                            wanted);
-                    })) {
-
-                return std::nullopt; // We don't support it, the layer can't
-                                     // work.
+        // Only append the extra extension if it wasn't already asked for.
+        for (const auto& wanted : PhysicalDeviceContext::required_extensions) {
+            if (already_requested.contains(wanted)) {
+                continue;
             }
 
             next_extensions.push_back(wanted);
@@ -261,26 +241,16 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         return next_extensions;
     }();
 
-    if (!next_extensions.has_value()) {
-        return VK_ERROR_INITIALIZATION_FAILED;
-    }
-
-    const auto create_device = instance_context.vtable.CreateDevice;
-    if (!create_device) {
-        return VK_ERROR_INITIALIZATION_FAILED;
-    }
-
     const auto next_create_info = [&]() -> VkDeviceCreateInfo {
         auto next_pCreateInfo = *pCreateInfo;
-        next_pCreateInfo.ppEnabledExtensionNames = std::data(*next_extensions);
-        next_pCreateInfo.enabledExtensionCount = std::size(*next_extensions);
+        next_pCreateInfo.ppEnabledExtensionNames = std::data(next_extensions);
+        next_pCreateInfo.enabledExtensionCount = std::size(next_extensions);
         return next_pCreateInfo;
     }();
 
-    if (const auto result = create_device(physical_device, &next_create_info,
-                                          pAllocator, pDevice);
+    if (const auto result = context->instance.vtable.CreateDevice(
+            physical_device, &next_create_info, pAllocator, pDevice);
         result != VK_SUCCESS) {
-
         return result;
     }
 
@@ -313,16 +283,13 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     DEVICE_VTABLE_LOAD(ResetQueryPoolEXT);
 #undef DEVICE_VTABLE_LOAD
 
-    const auto physical_context = layer_context.get_context(physical_device);
-
     const auto key = layer_context.get_key(*pDevice);
     const auto lock = std::scoped_lock{layer_context.mutex};
-    assert(!layer_context.contexts.contains(key));
 
+    assert(!layer_context.contexts.contains(key));
     layer_context.contexts.try_emplace(
-        key,
-        std::make_shared<DeviceContext>(instance_context, *physical_context,
-                                        *pDevice, std::move(vtable)));
+        key, std::make_shared<DeviceContext>(context->instance, *context,
+                                             *pDevice, std::move(vtable)));
 
     return VK_SUCCESS;
 }
@@ -358,10 +325,10 @@ static VKAPI_ATTR void VKAPI_CALL
 GetDeviceQueue(VkDevice device, std::uint32_t queue_family_index,
                std::uint32_t queue_index, VkQueue* queue) {
 
-    const auto device_context = layer_context.get_context(device);
+    const auto context = layer_context.get_context(device);
 
-    device_context->vtable.GetDeviceQueue(device, queue_family_index,
-                                          queue_index, queue);
+    context->vtable.GetDeviceQueue(device, queue_family_index, queue_index,
+                                   queue);
     if (!queue || !*queue) {
         return;
     }
@@ -373,7 +340,7 @@ GetDeviceQueue(VkDevice device, std::uint32_t queue_family_index,
     const auto lock = std::scoped_lock{layer_context.mutex};
     const auto [it, inserted] = layer_context.contexts.try_emplace(key);
     if (inserted) {
-        it->second = std::make_shared<QueueContext>(*device_context, *queue,
+        it->second = std::make_shared<QueueContext>(*context, *queue,
                                                     queue_family_index);
     }
 
@@ -381,16 +348,16 @@ GetDeviceQueue(VkDevice device, std::uint32_t queue_family_index,
     // but this is expected.
     const auto ptr = std::dynamic_pointer_cast<QueueContext>(it->second);
     assert(ptr);
-    device_context->queues.emplace(*queue, ptr);
+    context->queues.emplace(*queue, ptr);
 }
 
 // Identical logic to gdq1.
 static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(
     VkDevice device, const VkDeviceQueueInfo2* info, VkQueue* queue) {
 
-    const auto device_context = layer_context.get_context(device);
+    const auto context = layer_context.get_context(device);
 
-    device_context->vtable.GetDeviceQueue2(device, info, queue);
+    context->vtable.GetDeviceQueue2(device, info, queue);
     if (!queue || !*queue) {
         return;
     }
@@ -399,13 +366,13 @@ static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(
     const auto lock = std::scoped_lock{layer_context.mutex};
     const auto [it, inserted] = layer_context.contexts.try_emplace(key);
     if (inserted) {
-        it->second = std::make_shared<QueueContext>(*device_context, *queue,
+        it->second = std::make_shared<QueueContext>(*context, *queue,
                                                     info->queueFamilyIndex);
     }
 
     const auto ptr = std::dynamic_pointer_cast<QueueContext>(it->second);
     assert(ptr);
-    device_context->queues.emplace(*queue, ptr);
+    context->queues.emplace(*queue, ptr);
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(
@@ -413,6 +380,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(
     VkSemaphore semaphore, VkFence fence, std::uint32_t* pImageIndex) {
 
     const auto context = layer_context.get_context(device);
+
     if (const auto result = context->vtable.AcquireNextImageKHR(
             device, swapchain, timeout, semaphore, fence, pImageIndex);
         result != VK_SUCCESS) {
@@ -430,6 +398,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImage2KHR(
     std::uint32_t* pImageIndex) {
 
     const auto context = layer_context.get_context(device);
+
     if (const auto result = context->vtable.AcquireNextImage2KHR(
             device, pAcquireInfo, pImageIndex);
         result != VK_SUCCESS) {
@@ -447,36 +416,38 @@ static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
               const VkSubmitInfo* submit_infos, VkFence fence) {
 
-    const auto& queue_context = layer_context.get_context(queue);
-    const auto& vtable = queue_context->device_context.vtable;
+    const auto context = layer_context.get_context(queue);
 
-    if (!submit_count || !queue_context->should_inject_timestamps()) { 
+    const auto& vtable = context->device_context.vtable;
+
+    if (!submit_count || !context->should_inject_timestamps()) {
         return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
     }
 
     // What's happening here?
     // We are making a very modest modification to all vkQueueSubmits where we
     // inject a start and end timestamp query command buffer that writes when
-    // the GPU started and finished work for each submission. It's important to
-    // note that we deliberately do *NOT* use or modify any semaphores
-    // as a mechanism to signal completion or the availability of these submits
-    // for multiple reasons:
+    // the GPU started and finished work for each submission. Note, we do *NOT*
+    // use or modify any semaphores as a mechanism to signal completion or the
+    // availability of these submits for multiple reasons:
     //     1. Modifying semaphores (particuarly in vkQueueSubmit1) is ANNOYING
     //        done correctly. The pNext chain is const and difficult to modify
     //        without traversing the entire thing and doing surgical deep copies
     //        and patches for multiple pNext's sType's. It's easier to leave it
-    //        alone.
+    //        alone. If we do edit them it's either a maintenance nightmare or
+    //        an illegal const cast timebomb that breaks valid vulkan
+    //        applications that pass truly read only vkSubmitInfo->pNext's.
     //     2. Semaphores only signal at the end of their work, so we cannot use
     //        them as a mechanism to know if work has started without doing
-    //        another dummy submission. This adds complexity and also might
-    //        skew our timestamps slightly as they wouldn't be a part of the
-    //        submission which contained those command buffers.
+    //        another dummy submission. If we did this it adds complexity and
+    //        also might skew our timestamps slightly as they wouldn't be a part
+    //        of the submission which contained those command buffers.
     //     3. Timestamps support querying if their work has started/ended
     //        as long as we use the vkHostQueryReset extension to reset them
     //        before we consider them queryable. This means we don't need a
-    //        'is it valid to query' timeline semaphore.
+    //        'is it valid to query my timestamps' timeline semaphore.
     //     4. The performance impact of using semaphores vs timestamps is
-    //        negligable. 
+    //        negligible.
 
     using cbs_t = std::vector<VkCommandBuffer>;
     auto next_submits = std::vector<VkSubmitInfo>{};
@@ -496,10 +467,10 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
         [&](const auto& submit) {
-            const auto head_handle = queue_context->timestamp_pool->acquire();
-            const auto tail_handle = queue_context->timestamp_pool->acquire();
-            head_handle->setup_command_buffers(*tail_handle, *queue_context);
-            queue_context->notify_submit(submit, head_handle, tail_handle, now);
+            const auto head_handle = context->timestamp_pool->acquire();
+            const auto tail_handle = context->timestamp_pool->acquire();
+            head_handle->setup_command_buffers(*tail_handle, *context);
+            context->notify_submit(submit, head_handle, tail_handle, now);
 
             handles.emplace_back(head_handle);
             handles.emplace_back(tail_handle);
@@ -528,10 +499,11 @@ static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
                const VkSubmitInfo2* submit_infos, VkFence fence) {
 
-    const auto& queue_context = layer_context.get_context(queue);
-    const auto& vtable = queue_context->device_context.vtable;
+    const auto context = layer_context.get_context(queue);
 
-    if (!submit_count || !queue_context->should_inject_timestamps()) {
+    const auto& vtable = context->device_context.vtable;
+
+    if (!submit_count || !context->should_inject_timestamps()) {
         return vtable.QueueSubmit2(queue, submit_count, submit_infos, fence);
     }
 
@@ -545,10 +517,10 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
         [&](const auto& submit) {
-            const auto head_handle = queue_context->timestamp_pool->acquire();
-            const auto tail_handle = queue_context->timestamp_pool->acquire();
-            head_handle->setup_command_buffers(*tail_handle, *queue_context);
-            queue_context->notify_submit(submit, head_handle, tail_handle, now);
+            const auto head_handle = context->timestamp_pool->acquire();
+            const auto tail_handle = context->timestamp_pool->acquire();
+            head_handle->setup_command_buffers(*tail_handle, *context);
+            context->notify_submit(submit, head_handle, tail_handle, now);
 
             handles.emplace_back(head_handle);
             handles.emplace_back(tail_handle);
@@ -588,8 +560,9 @@ vkQueueSubmit2KHR(VkQueue queue, std::uint32_t submit_count,
 static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
 
-    const auto queue_context = layer_context.get_context(queue);
-    const auto& vtable = queue_context->device_context.vtable;
+    const auto context = layer_context.get_context(queue);
+
+    const auto& vtable = context->device_context.vtable;
 
     if (const auto res = vtable.QueuePresentKHR(queue, present_info);
         res != VK_SUCCESS) {
@@ -597,7 +570,7 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
         return res;
     }
 
-    queue_context->notify_present(*present_info);
+    context->notify_present(*present_info);
 
     return VK_SUCCESS;
 }
@@ -606,9 +579,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
     VkPhysicalDevice physical_device, const char* pLayerName,
     std::uint32_t* pPropertyCount, VkExtensionProperties* pProperties) {
 
-    const auto physical_context = layer_context.get_context(physical_device);
-    const auto& instance = physical_context->instance;
-    const auto& vtable = instance.vtable;
+    const auto context = layer_context.get_context(physical_device);
+
+    const auto& vtable = context->instance.vtable;
 
     // Not asking about our layer - just forward it.
     if (!pLayerName || std::string_view{pLayerName} != LAYER_NAME) {
@@ -623,46 +596,44 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
         return VK_SUCCESS;
     }
 
-    // Defensive - they gave us zero space to work with.
     if (!count) {
-        return VK_INCOMPLETE;
+        return VK_INCOMPLETE; // They gave us zero space to work with.
     }
 
     pProperties[0] =
         VkExtensionProperties{.extensionName = VK_AMD_ANTI_LAG_EXTENSION_NAME,
                               .specVersion = VK_AMD_ANTI_LAG_SPEC_VERSION};
     count = 1;
-
     return VK_SUCCESS;
 }
 
 static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
     VkPhysicalDevice physical_device, VkPhysicalDeviceFeatures2* pFeatures) {
 
-    const auto physical_context = layer_context.get_context(physical_device);
-    const auto& vtable = physical_context->instance.vtable;
+    const auto context = layer_context.get_context(physical_device);
+
+    const auto& vtable = context->instance.vtable;
 
     vtable.GetPhysicalDeviceFeatures2(physical_device, pFeatures);
 
-    if (const auto feature = find_next<VkPhysicalDeviceAntiLagFeaturesAMD>(
-            pFeatures->pNext,
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD);
-        feature) {
+    const auto feature = find_next<VkPhysicalDeviceAntiLagFeaturesAMD>(
+        pFeatures->pNext,
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD);
 
-        feature->antiLag = true;
+    if (feature) {
+        feature->antiLag = context->supports_required_extensions;
     }
 }
 
 static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2KHR(
     VkPhysicalDevice physical_device, VkPhysicalDeviceFeatures2KHR* pFeatures) {
-    // forward
     return low_latency::GetPhysicalDeviceFeatures2(physical_device, pFeatures);
 }
 
 static VKAPI_ATTR void VKAPI_CALL
 AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
-    const auto device_context = layer_context.get_context(device);
-    device_context->notify_antilag_update(*pData);
+    const auto context = layer_context.get_context(device);
+    context->notify_antilag_update(*pData);
 }
 
 } // namespace low_latency
@@ -724,9 +695,8 @@ LowLatency_GetDeviceProcAddr(VkDevice device, const char* const pName) {
         return it->second;
     }
 
-    using namespace low_latency;
-    const auto& vtable = layer_context.get_context(device)->vtable;
-    return vtable.GetDeviceProcAddr(device, pName);
+    const auto context = low_latency::layer_context.get_context(device);
+    return context->vtable.GetDeviceProcAddr(device, pName);
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
@@ -737,7 +707,6 @@ LowLatency_GetInstanceProcAddr(VkInstance instance, const char* const pName) {
         return it->second;
     }
 
-    using namespace low_latency;
-    const auto& vtable = layer_context.get_context(instance)->vtable;
-    return vtable.GetInstanceProcAddr(instance, pName);
+    const auto context = low_latency::layer_context.get_context(instance);
+    return context->vtable.GetInstanceProcAddr(instance, pName);
 }

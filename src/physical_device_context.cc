@@ -1,6 +1,11 @@
 #include "physical_device_context.hh"
 #include <vulkan/vulkan_core.h>
 
+#include <ranges>
+#include <string_view>
+#include <unordered_set>
+#include <vector>
+
 namespace low_latency {
 
 PhysicalDeviceContext::PhysicalDeviceContext(
@@ -28,6 +33,27 @@ PhysicalDeviceContext::PhysicalDeviceContext(
                                                        std::data(result));
 
         return std::make_unique<qp_t>(std::move(result));
+    }();
+
+    this->supports_required_extensions = [&]() {
+        auto count = std::uint32_t{};
+        vtable.EnumerateDeviceExtensionProperties(physical_device, nullptr,
+                                                  &count, nullptr);
+
+        auto supported_extensions = std::vector<VkExtensionProperties>(count);
+        vtable.EnumerateDeviceExtensionProperties(
+            physical_device, nullptr, &count, std::data(supported_extensions));
+
+        const auto supported_extension_names =
+            supported_extensions |
+            std::views::transform(
+                [](const auto& supported) { return supported.extensionName; }) |
+            std::ranges::to<std::unordered_set<std::string_view>>();
+
+        return std::ranges::all_of(
+            this->required_extensions, [&](const auto& required_extension) {
+                return supported_extension_names.contains(required_extension);
+            });
     }();
 }
 

@@ -33,11 +33,13 @@ QueueContext::QueueContext(DeviceContext& device_context, const VkQueue& queue,
         return command_pool;
     }();
 
-    this->timestamp_pool = std::make_unique<TimestampPool>(*this);
+    // Only construct a timestamp pool if we support it!
+    if (device_context.physical_device.supports_required_extensions) {
+        this->timestamp_pool = std::make_unique<TimestampPool>(*this);
+    }
 }
 
 QueueContext::~QueueContext() {
-
     this->in_flight_frames.clear();
     this->submissions.clear();
     this->timestamp_pool.reset();
@@ -182,7 +184,7 @@ void QueueContext::drain_frames_to_timings() {
 
     // Only need to calibrate this device, we don't support multi device anti
     // lag.
-    this->device_context.clock.calibrate();
+    this->device_context.clock->calibrate();
 
     while (std::size(this->in_flight_frames)) {
         const auto& frame = this->in_flight_frames.front();
@@ -377,6 +379,10 @@ void QueueContext::sleep_in_present() {
 
 bool QueueContext::should_inject_timestamps() const {
     const auto& pd = this->device_context.physical_device;
+
+    if (!pd.supports_required_extensions) {
+        return false;
+    }
 
     assert(pd.queue_properties);
     const auto& queue_props = *pd.queue_properties;

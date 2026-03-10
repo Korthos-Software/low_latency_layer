@@ -148,7 +148,7 @@ TimestampPool::Handle::get_time() {
         return std::nullopt;
     }
 
-    return device_ctx.clock.ticks_to_time(query_result.value);
+    return device_ctx.clock->ticks_to_time(query_result.value);
 }
 
 std::optional<DeviceContext::Clock::time_point_t>

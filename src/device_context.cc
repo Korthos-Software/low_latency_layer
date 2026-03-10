@@ -11,7 +11,13 @@ DeviceContext::DeviceContext(InstanceContext& parent_instance,
                              const VkDevice& device,
                              VkuDeviceDispatchTable&& vtable)
     : instance(parent_instance), physical_device(parent_physical_device),
-      device(device), vtable(std::move(vtable)), clock(*this) {}
+      device(device), vtable(std::move(vtable)) {
+
+    // Only create our clock if we can support creating it.
+    if (this->physical_device.supports_required_extensions) {
+        this->clock = std::make_unique<Clock>(*this);
+    }
+}
 
 DeviceContext::~DeviceContext() {
     this->present_queue.reset();
@@ -102,7 +108,7 @@ void DeviceContext::sleep_in_input() {
     // stall until it's finished.
     const auto& last_frame = frames.back();
     assert(std::size(last_frame.submissions));
-    const auto& last_frame_submission = frames.back().submissions.back();
+    const auto& last_frame_submission = last_frame.submissions.back();
     last_frame_submission->end_handle->get_time_spinlock();
 
     // From our sleep in present implementation, just spinning until
@@ -123,9 +129,8 @@ void DeviceContext::notify_antilag_update(const VkAntiLagDataAMD& data) {
         return;
     }
 
-    const auto& presentation_info = *data.pPresentationInfo;
     // Only care about the input stage for now.
-    if (presentation_info.stage != VK_ANTI_LAG_STAGE_INPUT_AMD) {
+    if (data.pPresentationInfo->stage != VK_ANTI_LAG_STAGE_INPUT_AMD) {
         return;
     }
 

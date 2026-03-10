@@ -53,9 +53,9 @@ struct DeviceContext final : public Context {
         void calibrate();
         time_point_t ticks_to_time(const std::uint64_t& ticks) const;
     };
-    Clock clock;
+    std::unique_ptr<Clock> clock;
 
-    std::uint32_t antilag_fps = 0;
+    std::uint32_t antilag_fps = 0; // TODO
     VkAntiLagModeAMD antilag_mode = VK_ANTI_LAG_MODE_DRIVER_CONTROL_AMD;
 
     // The queue used in the last present.
