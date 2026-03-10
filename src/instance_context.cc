@@ -5,9 +5,10 @@
 
 namespace low_latency {
 
-InstanceContext::InstanceContext(const VkInstance& instance,
+InstanceContext::InstanceContext(const LayerContext& parent_context,
+                                 const VkInstance& instance,
                                  VkuInstanceDispatchTable&& vtable)
-    : instance(instance), vtable(std::move(vtable)) {}
+    : layer(parent_context), instance(instance), vtable(std::move(vtable)) {}
 
 InstanceContext::~InstanceContext() {
     // Similar to devices, we should own the only shared ptr at this point so

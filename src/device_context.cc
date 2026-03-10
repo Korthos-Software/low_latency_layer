@@ -134,9 +134,11 @@ void DeviceContext::notify_antilag_update(const VkAntiLagDataAMD& data) {
         return;
     }
 
-    if (this->antilag_mode == VK_ANTI_LAG_MODE_ON_AMD) {
-        this->sleep_in_input();
+    if (this->antilag_mode != VK_ANTI_LAG_MODE_ON_AMD) {
+        return;
     }
+
+    this->sleep_in_input();
 }
 
 void DeviceContext::notify_queue_present(const QueueContext& queue) {

@@ -13,17 +13,15 @@
 
 // The purpose of this file is to provide a definition for the highest level
 // entry point struct of our vulkan state.
-//
-// All Context structs have deleted copy/move constructors. This is because we
-// want to be extremely explicit with how/when we delete things, and this allows
-// us to use destructors for cleanup without much worry about weird copies
-// floating around. Most contexts will probably live inside std::unique_ptr's as
-// a result so they can be used in standard containers.
 
 namespace low_latency {
 
 // All these templates do is make it so we can go from some DispatchableType
-// to their respective context's with nice syntax.
+// to their respective context's with nice syntax. This lets us write something
+// like this for all DispatchableTypes:
+//
+//     const auto device_context = get_context(some_vk_device);
+//           ^ It was automatically deduced as DeviceContext, wow!
 
 template <typename T>
 concept DispatchableType =
@@ -49,9 +47,17 @@ template <DispatchableType D>
 using dispatch_context_t = typename context_for_t<D>::context;
 
 struct LayerContext final : public Context {
+  private:
+    // If this is not null and set to exactly "1", then we should sleep after
+    // present.
+    static constexpr auto SLEEP_AFTER_PRESENT_ENV =
+        "LOW_LATENCY_LAYER_SLEEP_AFTER_PRESENT";
+
   public:
     std::mutex mutex;
     std::unordered_map<void*, std::shared_ptr<Context>> contexts;
+
+    bool is_antilag_1_enabled = false;
 
   public:
     LayerContext();

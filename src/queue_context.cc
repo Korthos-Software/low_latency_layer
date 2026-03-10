@@ -1,5 +1,6 @@
 #include "queue_context.hh"
 #include "device_context.hh"
+#include "layer_context.hh"
 #include "timestamp_pool.hh"
 
 #include <algorithm>
@@ -158,9 +159,14 @@ void QueueContext::notify_present(const VkPresentInfoKHR& info) {
     // any particular queue.
     this->device_context.notify_queue_present(*this);
 
-    // If antilag is on, the sleep will occur in notify_antilag_update at the
-    // device context.
-    if (this->device_context.antilag_mode != VK_ANTI_LAG_MODE_ON_AMD) {
+    // We should only sleep in present if two conditions are met:
+    //     1. Our antilag_mode isn't set to on, because otherwise the sleep will
+    //        be done in input and with far better results.
+    //     2. The 'is_antilag_1_enabled' flag, which exists at the layer's
+    //        context, is set.
+    if (this->device_context.antilag_mode != VK_ANTI_LAG_MODE_ON_AMD &&
+        this->device_context.instance.layer.is_antilag_1_enabled) {
+
         this->sleep_in_present();
     }
 }
@@ -268,11 +274,11 @@ void QueueContext::drain_frames_to_timings() {
         const auto cpu_start = [&]() -> auto {
             if (const auto it = std::rbegin(this->timings);
                 it != std::rend(this->timings)) {
+
                 return (*it)->frame.cpu_post_present_time;
             }
-            // This will happen *once*, and only for the first frame. We don't
-            // have a way of knowing when the CPU first started work obviously
-            // in this case because we're a vulkan layer and not omniscient.
+            // This will happen once, only for the first frame. We don't
+            // have a way of knowing when the CPU first started work here.
             // Just return our first submit's start for this edge case.
             return frame.submissions.front()->start_handle->get_time_required();
         }();

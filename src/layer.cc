@@ -28,15 +28,15 @@ LayerContext layer_context;
 
 } // namespace
 
+// Small templates which allow us to SFINAE find pNext structs.
 template <typename T>
 static T* find_next(void* const head, const VkStructureType& stype) {
-    for (auto i = reinterpret_cast<VkBaseOutStructure*>(head); i;
+    for (auto i = reinterpret_cast<VkBaseOutStructure*>(head)->pNext; i;
          i = i->pNext) {
 
-        if (i->sType != stype) {
-            continue;
+        if (i->sType == stype) {
+            return reinterpret_cast<T*>(i);
         }
-        return reinterpret_cast<T*>(i);
     }
     return nullptr;
 }
@@ -44,13 +44,13 @@ static T* find_next(void* const head, const VkStructureType& stype) {
 template <typename T>
 static const T* find_next(const void* const head,
                           const VkStructureType& stype) {
-    for (auto i = reinterpret_cast<const VkBaseInStructure*>(head); i;
+
+    for (auto i = reinterpret_cast<const VkBaseInStructure*>(head)->pNext; i;
          i = i->pNext) {
 
-        if (i->sType != stype) {
-            continue;
+        if (i->sType == stype) {
+            return reinterpret_cast<const T*>(i);
         }
-        return reinterpret_cast<const T*>(i);
     }
     return nullptr;
 }
@@ -59,12 +59,11 @@ template <typename T>
 static const T* find_link(const void* const head,
                           const VkStructureType& stype) {
     for (auto info = find_next<T>(head, stype); info;
-         info = find_next<T>(info->pNext, stype)) {
+         info = find_next<T>(info, stype)) {
 
-        if (info->function != VK_LAYER_LINK_INFO) {
-            continue;
+        if (info->function == VK_LAYER_LINK_INFO) {
+            return reinterpret_cast<const T*>(info);
         }
-        return reinterpret_cast<const T*>(info);
     }
     return nullptr;
 }
@@ -74,7 +73,7 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
                const VkAllocationCallbacks* pAllocator, VkInstance* pInstance) {
 
     const auto link_info = find_link<VkLayerInstanceCreateInfo>(
-        pCreateInfo->pNext, VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO);
+        pCreateInfo, VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO);
 
     if (!link_info || !link_info->u.pLayerInfo) {
         return VK_ERROR_INITIALIZATION_FAILED;
@@ -122,7 +121,8 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     assert(!layer_context.contexts.contains(key));
 
     layer_context.contexts.try_emplace(
-        key, std::make_shared<InstanceContext>(*pInstance, std::move(vtable)));
+        key, std::make_shared<InstanceContext>(layer_context, *pInstance,
+                                               std::move(vtable)));
 
     return VK_SUCCESS;
 }
@@ -182,16 +182,18 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     VkPhysicalDevice physical_device, const VkDeviceCreateInfo* pCreateInfo,
     const VkAllocationCallbacks* pAllocator, VkDevice* pDevice) {
 
+    const auto enabled_extensions =
+        std::span{pCreateInfo->ppEnabledExtensionNames,
+                  pCreateInfo->enabledExtensionCount};
+
     // Hook logic after create device looks like this.
     // !PHYS_SUPPORT &&  AL2_REQUESTED -> return INITIALIZATION_FAILED here.
     // !PHYS_SUPPORT && !AL2_REQUESTED -> hooks are no-ops
     //  PHYS_SUPPORT                   -> hooks inject timestamps regardless
     //                                    because AL1 might be used and it
     //                                    costs virtually nothing to do.
-    const auto was_antilag_requested = std::ranges::any_of(
-        std::span{pCreateInfo->ppEnabledExtensionNames,
-                  pCreateInfo->enabledExtensionCount},
-        [](const auto& ext) {
+    const auto was_antilag_requested =
+        std::ranges::any_of(enabled_extensions, [](const auto& ext) {
             return std::string_view{ext} == VK_AMD_ANTI_LAG_EXTENSION_NAME;
         });
 
@@ -201,7 +203,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     }
 
     const auto create_info = find_link<VkLayerDeviceCreateInfo>(
-        pCreateInfo->pNext, VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO);
+        pCreateInfo, VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO);
     if (!create_info || !create_info->u.pLayerInfo) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
@@ -216,9 +218,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
 
     // Build a next extensions vector from what they have requested.
     const auto next_extensions = [&]() -> std::vector<const char*> {
-        auto next_extensions = std::span{pCreateInfo->ppEnabledExtensionNames,
-                                         pCreateInfo->enabledExtensionCount} |
-                               std::ranges::to<std::vector>();
+        auto next_extensions = std::vector(std::from_range, enabled_extensions);
 
         // Don't append anything extra if we don't support what we need.
         if (!context->supports_required_extensions) {
@@ -251,6 +251,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     if (const auto result = context->instance.vtable.CreateDevice(
             physical_device, &next_create_info, pAllocator, pDevice);
         result != VK_SUCCESS) {
+
         return result;
     }
 
@@ -327,6 +328,9 @@ GetDeviceQueue(VkDevice device, std::uint32_t queue_family_index,
 
     const auto context = layer_context.get_context(device);
 
+    // Get device queue, unlike CreateDevice or CreateInstance, can be
+    // called multiple times to return the same queue object. Our insertion
+    // handling has to be a little different where we account for this.
     context->vtable.GetDeviceQueue(device, queue_family_index, queue_index,
                                    queue);
     if (!queue || !*queue) {
@@ -344,8 +348,7 @@ GetDeviceQueue(VkDevice device, std::uint32_t queue_family_index,
                                                     queue_family_index);
     }
 
-    // it->second should be QueueContext, also it might already be there
-    // but this is expected.
+    // it->second should be QueueContext, also it might already be there.
     const auto ptr = std::dynamic_pointer_cast<QueueContext>(it->second);
     assert(ptr);
     context->queues.emplace(*queue, ptr);
@@ -617,8 +620,7 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
     vtable.GetPhysicalDeviceFeatures2(physical_device, pFeatures);
 
     const auto feature = find_next<VkPhysicalDeviceAntiLagFeaturesAMD>(
-        pFeatures->pNext,
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD);
+        pFeatures, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD);
 
     if (feature) {
         feature->antiLag = context->supports_required_extensions;
@@ -633,6 +635,7 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2KHR(
 static VKAPI_ATTR void VKAPI_CALL
 AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     const auto context = layer_context.get_context(device);
+    assert(pData);
     context->notify_antilag_update(*pData);
 }
 

@@ -10,17 +10,22 @@
 
 namespace low_latency {
 
+class LayerContext;
 class PhysicalDeviceContext;
 
 struct InstanceContext final : public Context {
 
+    const LayerContext& layer;
+
     const VkInstance instance;
     const VkuInstanceDispatchTable vtable;
 
-    std::unordered_map<void*, std::shared_ptr<PhysicalDeviceContext>> phys_devices;
+    std::unordered_map<void*, std::shared_ptr<PhysicalDeviceContext>>
+        phys_devices;
 
   public:
-    InstanceContext(const VkInstance& instance,
+    InstanceContext(const LayerContext& parent_context,
+                    const VkInstance& instance,
                     VkuInstanceDispatchTable&& vtable);
     virtual ~InstanceContext();
 };
