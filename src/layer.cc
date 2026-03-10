@@ -378,43 +378,6 @@ static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(
     context->queues.emplace(*queue, ptr);
 }
 
-static VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(
-    VkDevice device, VkSwapchainKHR swapchain, std::uint64_t timeout,
-    VkSemaphore semaphore, VkFence fence, std::uint32_t* pImageIndex) {
-
-    const auto context = layer_context.get_context(device);
-
-    if (const auto result = context->vtable.AcquireNextImageKHR(
-            device, swapchain, timeout, semaphore, fence, pImageIndex);
-        result != VK_SUCCESS) {
-
-        return result;
-    }
-
-    context->notify_acquire(swapchain, *pImageIndex, semaphore);
-
-    return VK_SUCCESS;
-}
-
-static VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImage2KHR(
-    VkDevice device, const VkAcquireNextImageInfoKHR* pAcquireInfo,
-    std::uint32_t* pImageIndex) {
-
-    const auto context = layer_context.get_context(device);
-
-    if (const auto result = context->vtable.AcquireNextImage2KHR(
-            device, pAcquireInfo, pImageIndex);
-        result != VK_SUCCESS) {
-
-        return result;
-    }
-
-    context->notify_acquire(pAcquireInfo->swapchain, *pImageIndex,
-                            pAcquireInfo->semaphore);
-
-    return VK_SUCCESS;
-}
-
 static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
               const VkSubmitInfo* submit_infos, VkFence fence) {
@@ -678,9 +641,6 @@ static const auto device_functions = func_map_t{
     HOOK_ENTRY("vkQueueSubmit2KHR", low_latency::vkQueueSubmit2KHR),
 
     HOOK_ENTRY("vkQueuePresentKHR", low_latency::vkQueuePresentKHR),
-
-    HOOK_ENTRY("vkAcquireNextImageKHR", low_latency::vkAcquireNextImageKHR),
-    HOOK_ENTRY("vkAcquireNextImage2KHR", low_latency::vkAcquireNextImage2KHR),
 
     HOOK_ENTRY("vkAntiLagUpdateAMD", low_latency::AntiLagUpdateAMD),
 };

@@ -28,12 +28,6 @@ struct DeviceContext final : public Context {
 
     std::unordered_map<VkQueue, std::shared_ptr<QueueContext>> queues;
 
-    // We map swapchains to image indexes and their last signalled semaphore.
-    // FIXME: This isn't used right now, it was formerly used to map queue
-    // submissions but it ended up being unnecessary complexity.
-    using index_semaphores_t = std::unordered_map<std::uint32_t, VkSemaphore>;
-    std::unordered_map<VkSwapchainKHR, index_semaphores_t> swapchain_signals;
-
     struct Clock {
       public:
         using time_point_t = std::chrono::time_point<std::chrono::steady_clock,
@@ -71,11 +65,6 @@ struct DeviceContext final : public Context {
     virtual ~DeviceContext();
 
   public:
-    void notify_acquire(const VkSwapchainKHR& swapchain,
-                        const std::uint32_t& image_index,
-                        const VkSemaphore& signal_semaphore);
-
-    //
     void notify_antilag_update(const VkAntiLagDataAMD& data);
 
     void notify_queue_present(const QueueContext& queue);

@@ -81,15 +81,6 @@ DeviceContext::Clock::ticks_to_time(const std::uint64_t& ticks) const {
     return time_point_t{delta};
 }
 
-void DeviceContext::notify_acquire(const VkSwapchainKHR& swapchain,
-                                   const std::uint32_t& image_index,
-                                   const VkSemaphore& signal_semaphore) {
-    const auto it = this->swapchain_signals.try_emplace(swapchain).first;
-
-    // Doesn't matter if it was already there, overwrite it.
-    it->second.insert_or_assign(image_index, signal_semaphore);
-}
-
 void DeviceContext::sleep_in_input() {
     // Present hasn't happened yet, we don't know what queue to attack.
     if (!this->present_queue) {
