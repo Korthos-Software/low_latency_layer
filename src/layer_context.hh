@@ -69,7 +69,7 @@ struct LayerContext final : public Context {
     }
 
     template <DispatchableType DT>
-    std::shared_ptr<dispatch_context_t<DT>> get_context(const DT& dt) const {
+    std::shared_ptr<dispatch_context_t<DT>> get_context(const DT& dt) {
         const auto key = get_key(dt);
 
         const auto lock = std::scoped_lock(this->mutex);
