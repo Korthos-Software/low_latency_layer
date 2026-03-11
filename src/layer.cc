@@ -186,16 +186,31 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         std::span{pCreateInfo->ppEnabledExtensionNames,
                   pCreateInfo->enabledExtensionCount};
 
-    // Hook logic after create device looks like this.
-    // !PHYS_SUPPORT &&  AL2_REQUESTED -> return INITIALIZATION_FAILED here.
-    // !PHYS_SUPPORT && !AL2_REQUESTED -> hooks are no-ops
-    //  PHYS_SUPPORT                   -> hooks inject timestamps regardless
-    //                                    because AL1 might be used and it
-    //                                    costs virtually nothing to do.
+    const auto requested =
+        enabled_extensions |
+        std::ranges::to<std::unordered_set<std::string_view>>();
+
+    // There's the antilag extension that might be requested here - Antilag2.
+    // Then there's the other thing we provide, which is our AntiLag1
+    // equivalent. Calling them AL1 and AL2, where AL1 is requested via
+    // an env var and AL2 is requested at the device level via the extension,
+    // the cases where we exit with a bad code or deliberately no-op are:
+    //
+    //     !SUPPORTED && !AL2 && !AL1          -> No-op hooks
+    //     !SUPPORTED && !AL2 &&  AL1          -> No-op hooks
+    //     !SUPPORTED &&  AL2 && !AL1          -> VK_ERROR_INITIALIZATION_FAILED
+    //     !SUPPORTED &&  AL2 &&  AL1          -> VK_ERROR_INITIALIZATION_FAILED
+    //      SUPPORTED && !AL2 && !AL1          -> No-op hooks.
+    //
+    // Note that even though the user has explicitly enabled AL1 via an env var,
+    // failing hard here by returning INIT_FAILED if the device doesn't support
+    // it is wrong. The vulkan application could just be creating a device that
+    // cannot support it which is unrelated to anything present related. This
+    // is not the case with AL2, because the vulkan application has to
+    // explicitly ask for the extension when it creates the device.
+
     const auto was_antilag_requested =
-        std::ranges::any_of(enabled_extensions, [](const auto& ext) {
-            return std::string_view{ext} == VK_AMD_ANTI_LAG_EXTENSION_NAME;
-        });
+        requested.contains(VK_AMD_ANTI_LAG_EXTENSION_NAME);
 
     const auto context = layer_context.get_context(physical_device);
     if (!context->supports_required_extensions && was_antilag_requested) {
@@ -225,13 +240,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
             return next_extensions;
         }
 
-        const auto already_requested =
-            next_extensions |
-            std::ranges::to<std::unordered_set<std::string_view>>();
-
         // Only append the extra extension if it wasn't already asked for.
         for (const auto& wanted : PhysicalDeviceContext::required_extensions) {
-            if (already_requested.contains(wanted)) {
+            if (requested.contains(wanted)) {
                 continue;
             }
 
@@ -290,7 +301,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     assert(!layer_context.contexts.contains(key));
     layer_context.contexts.try_emplace(
         key, std::make_shared<DeviceContext>(context->instance, *context,
-                                             *pDevice, std::move(vtable)));
+                                             *pDevice, was_antilag_requested,
+                                             std::move(vtable)));
 
     return VK_SUCCESS;
 }

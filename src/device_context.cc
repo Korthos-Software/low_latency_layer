@@ -9,9 +9,11 @@ namespace low_latency {
 DeviceContext::DeviceContext(InstanceContext& parent_instance,
                              PhysicalDeviceContext& parent_physical_device,
                              const VkDevice& device,
+                             const bool was_antilag_requested,
                              VkuDeviceDispatchTable&& vtable)
     : instance(parent_instance), physical_device(parent_physical_device),
-      device(device), vtable(std::move(vtable)) {
+      device(device), was_antilag_requested(was_antilag_requested),
+      vtable(std::move(vtable)) {
 
     // Only create our clock if we can support creating it.
     if (this->physical_device.supports_required_extensions) {

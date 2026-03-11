@@ -390,6 +390,14 @@ bool QueueContext::should_inject_timestamps() const {
         return false;
     }
 
+    // Don't bother injecting timestamps during queue submission if both AL1 and
+    // AL2 are disabled.
+    if (!this->device_context.was_antilag_requested &&
+        !pd.instance.layer.is_antilag_1_enabled) {
+
+        return false;
+    }
+
     assert(pd.queue_properties);
     const auto& queue_props = *pd.queue_properties;
     assert(this->queue_family_index < std::size(queue_props));

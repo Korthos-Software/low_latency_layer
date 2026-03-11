@@ -23,6 +23,8 @@ struct DeviceContext final : public Context {
     InstanceContext& instance;
     PhysicalDeviceContext& physical_device;
 
+    const bool was_antilag_requested;
+
     const VkDevice device;
     const VkuDeviceDispatchTable vtable;
 
@@ -61,7 +63,8 @@ struct DeviceContext final : public Context {
   public:
     DeviceContext(InstanceContext& parent_instance,
                   PhysicalDeviceContext& parent_physical,
-                  const VkDevice& device, VkuDeviceDispatchTable&& vtable);
+                  const VkDevice& device, const bool was_antilag_requested,
+                  VkuDeviceDispatchTable&& vtable);
     virtual ~DeviceContext();
 
   public:
