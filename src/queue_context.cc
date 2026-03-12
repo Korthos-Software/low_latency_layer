@@ -117,7 +117,6 @@ void QueueContext::drain_submissions_to_frame() {
     if (start_iter == std::end(this->submissions)) {
         return;
     }
-    const auto last_iter = std::prev(std::end(this->submissions));
 
     // The last submission is either in flight, already processed, or we
     // just happen to be the first frame and we can just set it to our start
@@ -179,10 +178,6 @@ const auto debug_log_time2 = [](auto& stream, const auto& diff) {
     stream << ms << " " << us << " " << ns << " ago\n";
 };
 
-const auto debug_log_time = [](const auto& diff) {
-    debug_log_time2(std::cerr, diff);
-};
-
 void QueueContext::drain_frames_to_timings() {
     if (!std::size(this->in_flight_frames)) {
         return;
@@ -214,11 +209,11 @@ void QueueContext::drain_frames_to_timings() {
             DeviceContext::Clock::time_point_t start, end;
         };
 
-        const auto sorted_intervals = [&, this]() -> auto {
+        const auto sorted_intervals = [&]() -> auto {
             auto intervals = std::vector<Interval>{};
             std::ranges::transform(
                 frame.submissions, std::back_inserter(intervals),
-                [&, this](const auto& submission) {
+                [&](const auto& submission) {
                     return Interval{
                         .start = submission->start_handle->get_time_required(),
                         .end = submission->end_handle->get_time_required(),
@@ -286,12 +281,11 @@ void QueueContext::drain_frames_to_timings() {
         const auto cputime =
             frame.submissions.front()->enqueued_time - cpu_start;
 
-        auto timing = Timing{
+        this->timings.emplace_back(std::make_unique<Timing>(Timing{
             .gputime = gputime,
             .cputime = cputime,
             .frame = frame,
-        };
-        this->timings.emplace_back(std::make_unique<Timing>(timing));
+        }));
 
         this->in_flight_frames.pop_front();
     }
@@ -306,10 +300,7 @@ void QueueContext::drain_frames_to_timings() {
 }
 
 void QueueContext::sleep_in_present() {
-    const auto& device = this->device_context;
-    const auto& vtable = device.vtable;
-
-    // After calling this, any remaining frames are truly *in fligh*.
+    // After calling this, any remaining frames are truly in flight.
     this->drain_frames_to_timings();
     if (!std::size(this->in_flight_frames)) {
         return;

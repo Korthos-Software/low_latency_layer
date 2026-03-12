@@ -30,7 +30,7 @@ TimestampPool::QueryChunk::QueryChunk(const QueueContext& queue_context) {
         return std::make_unique<free_indices_t>(std::from_range, KEYS);
     }();
 
-    this->command_buffers = [&, this]() -> auto {
+    this->command_buffers = [&]() -> auto {
         auto cbs = std::make_unique<std::vector<VkCommandBuffer>>(CHUNK_SIZE);
         const auto cbai = VkCommandBufferAllocateInfo{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -85,8 +85,8 @@ std::shared_ptr<TimestampPool::Handle> TimestampPool::acquire() {
 TimestampPool::Handle::Handle(const TimestampPool& timestamp_pool,
                               const std::shared_ptr<QueryChunk>& origin_chunk,
                               const std::uint64_t& query_index)
-    : timestamp_pool(timestamp_pool), query_pool(origin_chunk->query_pool),
-      query_index(query_index), origin_chunk(origin_chunk),
+    : timestamp_pool(timestamp_pool), origin_chunk(origin_chunk),
+      query_pool(origin_chunk->query_pool), query_index(query_index),
       command_buffer((*origin_chunk->command_buffers)[query_index]) {}
 
 TimestampPool::Handle::~Handle() {
@@ -108,21 +108,21 @@ void TimestampPool::Handle::setup_command_buffers(
     const auto& vtable = device_context.vtable;
 
     vtable.ResetQueryPoolEXT(device_context.device, this->query_pool,
-                             this->query_index, 1);
+                             static_cast<std::uint32_t>(this->query_index), 1);
 
     vtable.BeginCommandBuffer(this->command_buffer, &cbbi);
-    vtable.CmdWriteTimestamp2KHR(this->command_buffer,
-                                 VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-                                 this->query_pool, this->query_index);
+    vtable.CmdWriteTimestamp2KHR(
+        this->command_buffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+        this->query_pool, static_cast<std::uint32_t>(this->query_index));
     vtable.EndCommandBuffer(this->command_buffer);
 
     vtable.ResetQueryPoolEXT(device_context.device, tail.query_pool,
-                             tail.query_index, 1);
+                             static_cast<std::uint32_t>(tail.query_index), 1);
     vtable.ResetCommandBuffer(tail.command_buffer, 0);
     vtable.BeginCommandBuffer(tail.command_buffer, &cbbi);
-    vtable.CmdWriteTimestamp2KHR(tail.command_buffer,
-                                 VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
-                                 tail.query_pool, tail.query_index);
+    vtable.CmdWriteTimestamp2KHR(
+        tail.command_buffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
+        tail.query_pool, static_cast<std::uint32_t>(tail.query_index));
     vtable.EndCommandBuffer(tail.command_buffer);
 }
 
@@ -138,8 +138,9 @@ TimestampPool::Handle::get_time() {
     auto query_result = QueryResult{};
 
     const auto r = vtable.GetQueryPoolResults(
-        device_ctx.device, query_pool, this->query_index, 1,
-        sizeof(query_result), &query_result, sizeof(query_result),
+        device_ctx.device, query_pool,
+        static_cast<std::uint32_t>(this->query_index), 1, sizeof(query_result),
+        &query_result, sizeof(query_result),
         VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
 
     assert(r == VK_SUCCESS || r == VK_NOT_READY);
@@ -182,7 +183,8 @@ TimestampPool::~TimestampPool() {
     const auto& vtable = this->queue_context.device_context.vtable;
     for (const auto& query_chunk : this->query_chunks) {
         vtable.FreeCommandBuffers(device, this->queue_context.command_pool,
-                                  std::size(*query_chunk->command_buffers),
+                                  static_cast<std::uint32_t>(
+                                      std::size(*query_chunk->command_buffers)),
                                   std::data(*query_chunk->command_buffers));
         vtable.DestroyQueryPool(device, query_chunk->query_pool, nullptr);
     }

@@ -40,21 +40,24 @@ add_custom_command(TARGET ${LIBRARY_NAME} POST_BUILD
 	"${OUTPUT_DIR}/"
 )
 
-set(SANITIZE_FLAGS
-  -fsanitize=address,undefined,leak
-  -fno-omit-frame-pointer
-  -fno-optimize-sibling-calls
-  -fno-sanitize-recover=all
-  -fsanitize-address-use-after-scope
-)
-
 target_compile_options(${LIBRARY_NAME} PRIVATE
-    #${SANITIZE_FLAGS}
-    -g3
-    -O1
+    # Inherited from Mesa.
+    -g
+    -O2
     -D_GLIBCXX_ASSERTIONS
-)
+    -D__STDC_CONSTANT_MACROS
+    -D__STDC_FORMAT_MACROS
+    -D__STDC_LIMIT_MACROS
 
-target_link_options(${LIBRARY_NAME} PRIVATE 
-    #${SANITIZE_FLAGS}
+    # Things I like.
+    -Wall
+    -Wextra
+    -Wundef
+    -Wconversion 
+    -Wdouble-promotion
+
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-sign-conversion
+    -Wno-missing-field-initializers
 )

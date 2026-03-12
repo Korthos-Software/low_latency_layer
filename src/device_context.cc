@@ -12,7 +12,7 @@ DeviceContext::DeviceContext(InstanceContext& parent_instance,
                              const bool was_antilag_requested,
                              VkuDeviceDispatchTable&& vtable)
     : instance(parent_instance), physical_device(parent_physical_device),
-      device(device), was_antilag_requested(was_antilag_requested),
+      was_antilag_requested(was_antilag_requested), device(device),
       vtable(std::move(vtable)) {
 
     // Only create our clock if we can support creating it.
@@ -78,7 +78,8 @@ DeviceContext::Clock::ticks_to_time(const std::uint64_t& ticks) const {
     // by GetCalibratedTimestamps. It would be more robust to use the posix
     // gettime that vulkan guarantees it can be compared to instead.
 
-    const auto diff_nsec = static_cast<std::int64_t>(diff * ns_tick + 0.5);
+    const auto diff_nsec =
+        static_cast<std::int64_t>(static_cast<double>(diff) * ns_tick + 0.5);
     const auto delta = std::chrono::nanoseconds(this->host_ns + diff_nsec);
     return time_point_t{delta};
 }

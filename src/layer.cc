@@ -186,9 +186,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         std::span{pCreateInfo->ppEnabledExtensionNames,
                   pCreateInfo->enabledExtensionCount};
 
-    const auto requested =
-        enabled_extensions |
-        std::ranges::to<std::unordered_set<std::string_view>>();
+    const auto requested = std::unordered_set<std::string_view>(
+        std::from_range, enabled_extensions);
 
     // There's the antilag extension that might be requested here - Antilag2.
     // Then there's the other thing we provide, which is our AntiLag1
@@ -223,9 +222,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
-    const auto gipa = create_info->u.pLayerInfo->pfnNextGetInstanceProcAddr;
     const auto gdpa = create_info->u.pLayerInfo->pfnNextGetDeviceProcAddr;
-    if (!gipa || !gdpa) {
+    if (!gdpa) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     const_cast<VkLayerDeviceCreateInfo*>(create_info)->u.pLayerInfo =
@@ -255,7 +253,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     const auto next_create_info = [&]() -> VkDeviceCreateInfo {
         auto next_pCreateInfo = *pCreateInfo;
         next_pCreateInfo.ppEnabledExtensionNames = std::data(next_extensions);
-        next_pCreateInfo.enabledExtensionCount = std::size(next_extensions);
+        next_pCreateInfo.enabledExtensionCount =
+            static_cast<std::uint32_t>(std::size(next_extensions));
         return next_pCreateInfo;
     }();
 
@@ -464,12 +463,14 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
 
             auto next_submit = submit;
             next_submit.pCommandBuffers = std::data(*next_cbs.back());
-            next_submit.commandBufferCount = std::size(*next_cbs.back());
+            next_submit.commandBufferCount =
+                static_cast<std::uint32_t>(std::size(*next_cbs.back()));
             return next_submit;
         });
 
-    return vtable.QueueSubmit(queue, std::size(next_submits),
-                              std::data(next_submits), fence);
+    return vtable.QueueSubmit(
+        queue, static_cast<std::uint32_t>(std::size(next_submits)),
+        std::data(next_submits), fence);
 }
 
 // The logic for this function is identical to vkSubmitInfo.
@@ -520,12 +521,14 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
 
             auto next_submit = submit;
             next_submit.pCommandBufferInfos = std::data(*next_cbs.back());
-            next_submit.commandBufferInfoCount = std::size(*next_cbs.back());
+            next_submit.commandBufferInfoCount =
+                static_cast<std::uint32_t>(std::size(*next_cbs.back()));
             return next_submit;
         });
 
-    return vtable.QueueSubmit2(queue, std::size(next_submits),
-                               std::data(next_submits), fence);
+    return vtable.QueueSubmit2(
+        queue, static_cast<std::uint32_t>(std::size(next_submits)),
+        std::data(next_submits), fence);
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL

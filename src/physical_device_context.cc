@@ -1,4 +1,5 @@
 #include "physical_device_context.hh"
+
 #include <vulkan/vulkan_core.h>
 
 #include <ranges>
@@ -44,7 +45,7 @@ PhysicalDeviceContext::PhysicalDeviceContext(
         vtable.EnumerateDeviceExtensionProperties(
             physical_device, nullptr, &count, std::data(supported_extensions));
 
-        const auto supported_extension_names =
+        const auto supported =
             supported_extensions |
             std::views::transform(
                 [](const auto& supported) { return supported.extensionName; }) |
@@ -52,7 +53,7 @@ PhysicalDeviceContext::PhysicalDeviceContext(
 
         return std::ranges::all_of(
             this->required_extensions, [&](const auto& required_extension) {
-                return supported_extension_names.contains(required_extension);
+                return supported.contains(required_extension);
             });
     }();
 }
