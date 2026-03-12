@@ -2,7 +2,6 @@
 #include "device_context.hh"
 #include "queue_context.hh"
 
-#include <chrono>
 #include <ranges>
 #include <span>
 #include <vulkan/utility/vk_dispatch_table.h>
@@ -10,39 +9,59 @@
 
 namespace low_latency {
 
-TimestampPool::QueryChunk::QueryChunk(const QueueContext& queue_context) {
-    const auto& device_context = queue_context.device_context;
-    const auto& vtable = device_context.vtable;
+TimestampPool::QueryChunk::QueryPoolOwner::QueryPoolOwner(
+    const QueueContext& queue_context)
+    : queue_context(queue_context) {
 
-    this->query_pool = [&]() {
-        const auto qpci = VkQueryPoolCreateInfo{
-            .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
-            .queryType = VK_QUERY_TYPE_TIMESTAMP,
-            .queryCount = QueryChunk::CHUNK_SIZE};
+    const auto& device_context = this->queue_context.device_context;
+    const auto qpci =
+        VkQueryPoolCreateInfo{.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+                              .queryType = VK_QUERY_TYPE_TIMESTAMP,
+                              .queryCount = QueryChunk::CHUNK_SIZE};
 
-        auto qp = VkQueryPool{};
-        THROW_NON_VKSUCCESS(
-            vtable.CreateQueryPool(device_context.device, &qpci, nullptr, &qp));
-        return qp;
-    }();
+    THROW_NON_VKSUCCESS(device_context.vtable.CreateQueryPool(
+        device_context.device, &qpci, nullptr, &this->query_pool));
+}
+
+TimestampPool::QueryChunk::QueryPoolOwner::~QueryPoolOwner() {
+    const auto& device_context = this->queue_context.device_context;
+    device_context.vtable.DestroyQueryPool(device_context.device,
+                                           this->query_pool, nullptr);
+}
+
+TimestampPool::QueryChunk::QueryChunk(const QueueContext& queue_context)
+    : query_pool(std::make_unique<QueryPoolOwner>(queue_context)),
+      command_buffers(std::make_unique<CommandBuffersOwner>(queue_context)) {
 
     this->free_indices = []() {
         constexpr auto KEYS = std::views::iota(0u, QueryChunk::CHUNK_SIZE);
         return std::make_unique<free_indices_t>(std::from_range, KEYS);
     }();
+}
 
-    this->command_buffers = [&]() -> auto {
-        auto cbs = std::make_unique<std::vector<VkCommandBuffer>>(CHUNK_SIZE);
-        const auto cbai = VkCommandBufferAllocateInfo{
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = queue_context.command_pool,
-            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = static_cast<std::uint32_t>(std::size(*cbs)),
-        };
-        THROW_NON_VKSUCCESS(vtable.AllocateCommandBuffers(
-            device_context.device, &cbai, std::data(*cbs)));
-        return cbs;
-    }();
+TimestampPool::QueryChunk::CommandBuffersOwner::CommandBuffersOwner(
+    const QueueContext& queue_context)
+    : queue_context(queue_context), command_buffers(CHUNK_SIZE) {
+
+    const auto& device_context = queue_context.device_context;
+
+    const auto cbai = VkCommandBufferAllocateInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = *queue_context.command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = CHUNK_SIZE,
+    };
+    THROW_NON_VKSUCCESS(device_context.vtable.AllocateCommandBuffers(
+        device_context.device, &cbai, std::data(this->command_buffers)));
+}
+
+TimestampPool::QueryChunk::CommandBuffersOwner::~CommandBuffersOwner() {
+    const auto& device_context = this->queue_context.device_context;
+
+    device_context.vtable.FreeCommandBuffers(
+        device_context.device, *this->queue_context.command_pool,
+        static_cast<std::uint32_t>(std::size(this->command_buffers)),
+        std::data(this->command_buffers));
 }
 
 TimestampPool::QueryChunk::~QueryChunk() {}
@@ -87,7 +106,7 @@ TimestampPool::Handle::Handle(const TimestampPool& timestamp_pool,
                               const std::shared_ptr<QueryChunk>& origin_chunk,
                               const std::uint64_t& query_index)
     : timestamp_pool(timestamp_pool), origin_chunk(origin_chunk),
-      query_pool(origin_chunk->query_pool), query_index(query_index),
+      query_pool(*origin_chunk->query_pool), query_index(query_index),
       command_buffer((*origin_chunk->command_buffers)[query_index]) {}
 
 TimestampPool::Handle::~Handle() {
@@ -187,16 +206,6 @@ DeviceContext::Clock::time_point_t TimestampPool::Handle::get_time_required() {
     return *time;
 }
 
-TimestampPool::~TimestampPool() {
-    const auto& device = this->queue_context.device_context.device;
-    const auto& vtable = this->queue_context.device_context.vtable;
-    for (const auto& query_chunk : this->query_chunks) {
-        vtable.FreeCommandBuffers(device, this->queue_context.command_pool,
-                                  static_cast<std::uint32_t>(
-                                      std::size(*query_chunk->command_buffers)),
-                                  std::data(*query_chunk->command_buffers));
-        vtable.DestroyQueryPool(device, query_chunk->query_pool, nullptr);
-    }
-}
+TimestampPool::~TimestampPool() {}
 
 } // namespace low_latency

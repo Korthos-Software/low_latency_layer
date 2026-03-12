@@ -13,26 +13,34 @@
 
 namespace low_latency {
 
+QueueContext::CommandPoolOwner::CommandPoolOwner(
+    const QueueContext& queue_context)
+    : queue_context(queue_context) {
+
+    const auto& device_context = this->queue_context.device_context;
+
+    const auto cpci = VkCommandPoolCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
+                 VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = queue_context.queue_family_index,
+    };
+
+    THROW_NON_VKSUCCESS(device_context.vtable.CreateCommandPool(
+        device_context.device, &cpci, nullptr, &this->command_pool));
+}
+
+QueueContext::CommandPoolOwner::~CommandPoolOwner() {
+    const auto& device_context = this->queue_context.device_context;
+    device_context.vtable.DestroyCommandPool(device_context.device,
+                                             this->command_pool, nullptr);
+}
+
 QueueContext::QueueContext(DeviceContext& device_context, const VkQueue& queue,
                            const std::uint32_t& queue_family_index)
     : device_context(device_context), queue(queue),
-      queue_family_index(queue_family_index) {
-
-    // Important we make the command pool before the timestamp pool, because
-    // it's a dependency.
-    this->command_pool = [&]() {
-        const auto cpci = VkCommandPoolCreateInfo{
-            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-            .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
-                     VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-            .queueFamilyIndex = queue_family_index,
-        };
-
-        auto command_pool = VkCommandPool{};
-        THROW_NON_VKSUCCESS(device_context.vtable.CreateCommandPool(
-            device_context.device, &cpci, nullptr, &command_pool));
-        return command_pool;
-    }();
+      queue_family_index(queue_family_index),
+      command_pool(std::make_unique<CommandPoolOwner>(*this)) {
 
     // Only construct a timestamp pool if we support it!
     if (device_context.physical_device.supports_required_extensions) {
@@ -44,10 +52,6 @@ QueueContext::~QueueContext() {
     this->in_flight_frames.clear();
     this->submissions.clear();
     this->timestamp_pool.reset();
-
-    const auto& vtable = this->device_context.vtable;
-    vtable.DestroyCommandPool(this->device_context.device, this->command_pool,
-                              nullptr);
 }
 
 void QueueContext::notify_submit(

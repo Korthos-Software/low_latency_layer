@@ -24,7 +24,7 @@ class QueueContext final : public Context {
     // The amount of queue submissions we allow tracked per queue before
     // we give up tracking them. For a queue that is presented to,
     // these submissions will be constantly moved to Frame structs so
-    // it's not an issue that we only track so many - unless it just 
+    // it's not an issue that we only track so many - unless it just
     // happens that an application makes an unexpectedly large
     // amount of vkQueueSubmit's per frame. For queues which don't
     // present, this limit stops them from growing limitlessly in memory
@@ -37,7 +37,23 @@ class QueueContext final : public Context {
     const VkQueue queue;
     const std::uint32_t queue_family_index;
 
-    VkCommandPool command_pool;
+    struct CommandPoolOwner final {
+      private:
+        const QueueContext& queue_context;
+        VkCommandPool command_pool;
+
+      public:
+        CommandPoolOwner(const QueueContext& queue_context);
+        CommandPoolOwner(const CommandPoolOwner&) = delete;
+        CommandPoolOwner(CommandPoolOwner&&) = delete;
+        CommandPoolOwner operator=(const CommandPoolOwner&) = delete;
+        CommandPoolOwner operator=(CommandPoolOwner&&) = delete;
+        ~CommandPoolOwner();
+
+      public:
+        operator const VkCommandPool&() const { return this->command_pool; }
+    };
+    const std::unique_ptr<CommandPoolOwner> command_pool;
 
     std::unique_ptr<TimestampPool> timestamp_pool;
 

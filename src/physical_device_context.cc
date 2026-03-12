@@ -40,6 +40,7 @@ PhysicalDeviceContext::PhysicalDeviceContext(
         auto count = std::uint32_t{};
         THROW_NON_VKSUCCESS(vtable.EnumerateDeviceExtensionProperties(
             physical_device, nullptr, &count, nullptr));
+
         auto supported_extensions = std::vector<VkExtensionProperties>(count);
         THROW_NON_VKSUCCESS(vtable.EnumerateDeviceExtensionProperties(
             physical_device, nullptr, &count,

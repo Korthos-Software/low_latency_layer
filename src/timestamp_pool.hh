@@ -33,13 +33,50 @@ class TimestampPool final {
     // We reuse these when they're released.
     struct QueryChunk final {
       private:
-        using free_indices_t = std::unordered_set<std::uint64_t>;
         static constexpr auto CHUNK_SIZE = 512u;
 
       public:
-        VkQueryPool query_pool;
+        struct QueryPoolOwner final {
+          private:
+            const QueueContext& queue_context;
+            VkQueryPool query_pool;
+
+          public:
+            QueryPoolOwner(const QueueContext& queue_context);
+            QueryPoolOwner(const QueryPoolOwner&) = delete;
+            QueryPoolOwner(QueryPoolOwner&&) = delete;
+            QueryPoolOwner operator=(const QueryPoolOwner&) = delete;
+            QueryPoolOwner operator=(QueryPoolOwner&&) = delete;
+            ~QueryPoolOwner();
+
+          public:
+            operator const VkQueryPool&() const { return this->query_pool; }
+        };
+        std::unique_ptr<QueryPoolOwner> query_pool;
+
+        using free_indices_t = std::unordered_set<std::uint64_t>;
         std::unique_ptr<free_indices_t> free_indices;
-        std::unique_ptr<std::vector<VkCommandBuffer>> command_buffers;
+
+        struct CommandBuffersOwner final {
+          private:
+            const QueueContext& queue_context;
+            std::vector<VkCommandBuffer> command_buffers;
+
+          public:
+            CommandBuffersOwner(const QueueContext& queue_context);
+            CommandBuffersOwner(const CommandBuffersOwner&) = delete;
+            CommandBuffersOwner(CommandBuffersOwner&&) = delete;
+            CommandBuffersOwner operator=(const CommandBuffersOwner&) = delete;
+            CommandBuffersOwner operator=(CommandBuffersOwner&&) = delete;
+            ~CommandBuffersOwner();
+
+          public:
+            VkCommandBuffer operator[](const std::size_t& i) {
+                assert(i < CHUNK_SIZE);
+                return this->command_buffers[i];
+            }
+        };
+        std::unique_ptr<CommandBuffersOwner> command_buffers;
 
       public:
         QueryChunk(const QueueContext& queue_context);

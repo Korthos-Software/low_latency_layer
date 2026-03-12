@@ -38,7 +38,6 @@ DeviceContext::Clock::Clock(const DeviceContext& context) : device(context) {
 DeviceContext::Clock::~Clock() {}
 
 DeviceContext::Clock::time_point_t DeviceContext::Clock::now() {
-
     auto ts = timespec{};
     if (clock_gettime(CLOCK_MONOTONIC, &ts)) {
         throw errno;
