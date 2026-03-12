@@ -46,6 +46,13 @@ struct DeviceContext final : public Context {
         ~Clock();
 
       public:
+        // WARNING: This *MUST* be used over std::chrono::steady_clock::now if
+        // you're planning on comparing it to a device's clock. If it isn't, the
+        // timestamps might from different domains and will be completely
+        // nonsensical.
+        static time_point_t now();
+
+      public:
         void calibrate();
         time_point_t ticks_to_time(const std::uint64_t& ticks) const;
     };

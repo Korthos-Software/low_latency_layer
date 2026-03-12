@@ -143,7 +143,7 @@ void QueueContext::drain_submissions_to_frame() {
 
     this->in_flight_frames.emplace_back(
         Frame{.submissions = std::move(this->submissions),
-              .cpu_post_present_time = std::chrono::steady_clock::now()});
+              .cpu_post_present_time = DeviceContext::Clock::now()});
     assert(std::size(this->in_flight_frames.back().submissions));
     // *valid but unspecified state after move, so clear!*
     this->submissions.clear();
@@ -293,8 +293,9 @@ void QueueContext::drain_frames_to_timings() {
     if (const auto T = std::size(this->timings);
         T > this->MAX_TRACKED_TIMINGS) {
 
-        const auto dist = T - this->MAX_TRACKED_TIMINGS;
-        const auto erase_to_iter = std::next(std::begin(this->timings), dist);
+        const auto erase_to_iter =
+            std::next(std::begin(this->timings),
+                      static_cast<long>(T - MAX_TRACKED_TIMINGS));
         this->timings.erase(std::begin(this->timings), erase_to_iter);
     }
 }
@@ -351,7 +352,7 @@ void QueueContext::sleep_in_present() {
     // |------------------------x------------------------------|
     // ^ first_gpu_work        now               last_gpu_work ^
 
-    const auto now = std::chrono::steady_clock::now();
+    const auto now = DeviceContext::Clock::now();
     const auto dist = now - first_gpu_work;
     const auto expected_dist_to_last = expected_gputime - dist;
 
@@ -375,22 +376,22 @@ void QueueContext::sleep_in_present() {
 }
 
 bool QueueContext::should_inject_timestamps() const {
-    const auto& pd = this->device_context.physical_device;
+    const auto& physical_device = this->device_context.physical_device;
 
-    if (!pd.supports_required_extensions) {
+    if (!physical_device.supports_required_extensions) {
         return false;
     }
 
     // Don't bother injecting timestamps during queue submission if both AL1 and
     // AL2 are disabled.
     if (!this->device_context.was_antilag_requested &&
-        !pd.instance.layer.is_antilag_1_enabled) {
+        !physical_device.instance.layer.is_antilag_1_enabled) {
 
         return false;
     }
 
-    assert(pd.queue_properties);
-    const auto& queue_props = *pd.queue_properties;
+    assert(physical_device.queue_properties);
+    const auto& queue_props = *physical_device.queue_properties;
     assert(this->queue_family_index < std::size(queue_props));
 
     const auto& props = queue_props[this->queue_family_index];

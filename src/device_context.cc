@@ -1,6 +1,7 @@
 #include "device_context.hh"
 #include "queue_context.hh"
 
+#include <time.h>
 #include <utility>
 #include <vulkan/vulkan_core.h>
 
@@ -35,6 +36,17 @@ DeviceContext::Clock::Clock(const DeviceContext& context) : device(context) {
 }
 
 DeviceContext::Clock::~Clock() {}
+
+DeviceContext::Clock::time_point_t DeviceContext::Clock::now() {
+
+    auto ts = timespec{};
+    if (clock_gettime(CLOCK_MONOTONIC, &ts)) {
+        throw errno;
+    }
+
+    return time_point_t{std::chrono::seconds{ts.tv_sec} +
+                        std::chrono::nanoseconds{ts.tv_nsec}};
+}
 
 void DeviceContext::Clock::calibrate() {
     const auto infos = std::vector<VkCalibratedTimestampInfoKHR>{
@@ -75,14 +87,10 @@ DeviceContext::Clock::ticks_to_time(const std::uint64_t& ticks) const {
         return is_negative ? -signed_abs_diff : signed_abs_diff;
     }();
 
-    // This will have issues because std::chrono::steady_clock::now(), which
-    // we use for cpu time, may not be on the same time domain what was returned
-    // by GetCalibratedTimestamps. It would be more robust to use the posix
-    // gettime that vulkan guarantees it can be compared to instead.
-
     const auto diff_nsec =
         static_cast<std::int64_t>(static_cast<double>(diff) * ns_tick + 0.5);
-    const auto delta = std::chrono::nanoseconds(this->host_ns + diff_nsec);
+    const auto delta = std::chrono::nanoseconds(
+        this->host_ns + static_cast<std::uint64_t>(diff_nsec));
     return time_point_t{delta};
 }
 

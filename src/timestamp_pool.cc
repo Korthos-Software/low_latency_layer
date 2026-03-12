@@ -167,7 +167,7 @@ TimestampPool::Handle::get_time_spinlock(
 
     auto time = this->get_time();
     for (; !time.has_value(); time = this->get_time()) {
-        if (const auto now = std::chrono::steady_clock::now(); now >= until) {
+        if (const auto now = DeviceContext::Clock::now(); now >= until) {
             break;
         }
     }

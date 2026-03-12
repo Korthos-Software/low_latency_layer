@@ -438,7 +438,7 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     // more explicit + insurance if that changes.
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
-    const auto now = std::chrono::steady_clock::now();
+    const auto now = DeviceContext::Clock::now();
 
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
@@ -489,7 +489,7 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
-    const auto now = std::chrono::steady_clock::now();
+    const auto now = DeviceContext::Clock::now();
 
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),

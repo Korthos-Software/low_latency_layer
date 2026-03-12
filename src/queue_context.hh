@@ -20,7 +20,7 @@ class QueueContext final : public Context {
     // The amount of finished frame timing data we keep before eviction.
     // For now, this value is also the number of data points used in the
     // calculation of gpu timing information.
-    static constexpr auto MAX_TRACKED_TIMINGS = 50;
+    static constexpr auto MAX_TRACKED_TIMINGS = 50u;
     // The amount of queue submissions we allow tracked per queue before
     // we give up tracking them. For a queue that is presented to,
     // these submissions will be constantly moved to Frame structs so
@@ -29,7 +29,7 @@ class QueueContext final : public Context {
     // amount of vkQueueSubmit's per frame. For queues which don't
     // present, this limit stops them from growing limitlessly in memory
     // as we may not necessarily manually evict them yet.
-    static constexpr auto MAX_TRACKED_SUBMISSIONS = 50;
+    static constexpr auto MAX_TRACKED_SUBMISSIONS = 50u;
 
   public:
     DeviceContext& device_context;
