@@ -619,9 +619,43 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
 
 } // namespace low_latency
 
-using func_map_t = std::unordered_map<std::string_view, PFN_vkVoidFunction>;
+// This is a bit of template hackery which generates a wrapper function for each
+// of our hooks that keeps exceptions from getting sucked back into the caller.
+// This is useful because it allows us to use exceptions and not violate the
+// vulkan contract. If we can return something, VK_ERROR_UNKNOWN is used -
+// otherwise we call terminate.
+template <auto Func> struct HookExceptionWrapper;
+template <typename R, typename... Args, R (*Func)(Args...)>
+struct HookExceptionWrapper<Func> {
+    static R call(Args... args) noexcept {
+
+        // If the function is void, we don't need to think about anything and
+        // can just call it.
+        if constexpr (std::is_void_v<R>) {
+            Func(args...);
+            return;
+        }
+
+        // If the function isn't void, we need to wrap it in a try block. Any
+        // exceptions we get (which came from our layer) should handled here
+        // by returning VK_ERROR_UNKNOWN when we can. Otherwise just terminate.
+        try {
+            return Func(args...);
+        } catch (...) {
+            if constexpr (std::is_same_v<R, VkResult>) {
+                return VK_ERROR_UNKNOWN;
+            }
+        }
+
+        std::terminate();
+    }
+};
+
 #define HOOK_ENTRY(vk_name_literal, fn_sym)                                    \
-    {vk_name_literal, reinterpret_cast<PFN_vkVoidFunction>(fn_sym)}
+    {vk_name_literal, reinterpret_cast<PFN_vkVoidFunction>(                    \
+                          &HookExceptionWrapper<fn_sym>::call)}
+
+using func_map_t = std::unordered_map<std::string_view, PFN_vkVoidFunction>;
 static const auto instance_functions = func_map_t{
     HOOK_ENTRY("vkCreateDevice", low_latency::CreateDevice),
 
