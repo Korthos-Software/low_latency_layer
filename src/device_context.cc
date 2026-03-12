@@ -48,9 +48,11 @@ void DeviceContext::Clock::calibrate() {
         std::uint64_t host;
     };
     auto calibrated_result = CalibratedResult{};
-    device.vtable.GetCalibratedTimestampsKHR(device.device, 2, std::data(infos),
-                                             &calibrated_result.device,
-                                             &this->error_bound);
+
+    THROW_NON_VKSUCCESS(device.vtable.GetCalibratedTimestampsKHR(
+        device.device, 2, std::data(infos), &calibrated_result.device,
+        &this->error_bound));
+
     this->device_ticks = calibrated_result.device;
     this->host_ns = calibrated_result.host;
 }

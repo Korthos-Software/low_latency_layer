@@ -29,8 +29,8 @@ QueueContext::QueueContext(DeviceContext& device_context, const VkQueue& queue,
         };
 
         auto command_pool = VkCommandPool{};
-        device_context.vtable.CreateCommandPool(device_context.device, &cpci,
-                                                nullptr, &command_pool);
+        THROW_NON_VKSUCCESS(device_context.vtable.CreateCommandPool(
+            device_context.device, &cpci, nullptr, &command_pool));
         return command_pool;
     }();
 

@@ -394,7 +394,6 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
               const VkSubmitInfo* submit_infos, VkFence fence) {
 
     const auto context = layer_context.get_context(queue);
-
     const auto& vtable = context->device_context.vtable;
 
     if (!submit_count || !context->should_inject_timestamps()) {
@@ -479,7 +478,6 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
                const VkSubmitInfo2* submit_infos, VkFence fence) {
 
     const auto context = layer_context.get_context(queue);
-
     const auto& vtable = context->device_context.vtable;
 
     if (!submit_count || !context->should_inject_timestamps()) {
@@ -542,7 +540,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
 
     const auto context = layer_context.get_context(queue);
-
     const auto& vtable = context->device_context.vtable;
 
     if (const auto res = vtable.QueuePresentKHR(queue, present_info);
@@ -561,7 +558,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
     std::uint32_t* pPropertyCount, VkExtensionProperties* pProperties) {
 
     const auto context = layer_context.get_context(physical_device);
-
     const auto& vtable = context->instance.vtable;
 
     // Not asking about our layer - just forward it.
@@ -592,7 +588,6 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
     VkPhysicalDevice physical_device, VkPhysicalDeviceFeatures2* pFeatures) {
 
     const auto context = layer_context.get_context(physical_device);
-
     const auto& vtable = context->instance.vtable;
 
     vtable.GetPhysicalDeviceFeatures2(physical_device, pFeatures);

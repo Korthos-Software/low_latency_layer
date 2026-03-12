@@ -46,7 +46,7 @@ template <> struct context_for_t<VkQueue> {
 template <DispatchableType D>
 using dispatch_context_t = typename context_for_t<D>::context;
 
-struct LayerContext final : public Context {
+class LayerContext final : public Context {
   private:
     // If this is not null and set to exactly "1", then we should sleep after
     // present.

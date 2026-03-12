@@ -3,6 +3,11 @@
 
 namespace low_latency {
 
+#define THROW_NON_VKSUCCESS(x)                                                 \
+    if (const auto result = x; result != VK_SUCCESS) {                         \
+        throw result;                                                          \
+    }
+
 // A context class doesn't do much by itself. We just use it to provide a
 // virtual destructor so we can store a bunch of shared_ptrs in the same
 // container and rely on RTTI in the layer context. It also deletes the copy and
@@ -10,10 +15,9 @@ namespace low_latency {
 //
 // We _could_ do something weird and complicated where we define virtual pure
 // hashing and equality functions so we can store them in an unordered_set, but
-// it's just unnecessary complexity and doesn't allow us to perform 'do you exist'
-// lookups without creating an object.
+// it's just unnecessary complexity and doesn't allow us to perform 'do you
+// exist' lookups without creating an object.
 class Context {
-
   public:
     Context();
     Context(const Context& context) = delete;
