@@ -49,15 +49,15 @@ target_compile_options(${LIBRARY_NAME} PRIVATE
     -D__STDC_FORMAT_MACROS
     -D__STDC_LIMIT_MACROS
 
-    # Things I like.
     -Wall
     -Wextra
-    -Wundef
-    -Wconversion 
-    -Wdouble-promotion
-
     -Wno-unused-parameter
     -Wno-unused-function
     -Wno-sign-conversion
     -Wno-missing-field-initializers
+    $<$<NOT:$<CONFIG:Debug>>:-Wno-unused-variable -Wno-unused-but-set-variable>
+
+    -Wundef
+    -Wconversion 
+    -Wdouble-promotion
 )
