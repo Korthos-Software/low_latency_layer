@@ -195,11 +195,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     // an env var and AL2 is requested at the device level via the extension,
     // the cases where we exit with a bad code or deliberately no-op are:
     //
-    //     !SUPPORTED && !AL2 && !AL1          -> No-op hooks
     //     !SUPPORTED && !AL2 &&  AL1          -> No-op hooks
-    //     !SUPPORTED &&  AL2 && !AL1          -> VK_ERROR_INITIALIZATION_FAILED
-    //     !SUPPORTED &&  AL2 &&  AL1          -> VK_ERROR_INITIALIZATION_FAILED
-    //      SUPPORTED && !AL2 && !AL1          -> No-op hooks.
+    //                   !AL2 && !AL1          -> No-op hooks.
+    //     !SUPPORTED &&  AL2                  -> VK_ERROR_INITIALIZATION_FAILED
     //
     // Note that even though the user has explicitly enabled AL1 via an env var,
     // failing hard here by returning INIT_FAILED if the device doesn't support
@@ -616,24 +614,21 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
 
 // This is a bit of template hackery which generates a wrapper function for each
 // of our hooks that keeps exceptions from getting sucked back into the caller.
-// This is useful because it allows us to use exceptions and not violate the
-// vulkan contract. If we can return something, VK_ERROR_UNKNOWN is used -
-// otherwise we call terminate.
+// This is useful because we don't want to violate the Vulkan ABI by accident in
+// the case that we don't use try/catch somewhere. It's also useful because we
+// only use exceptions in unrecoverable absolute failure cases. This means that
+// we can just write our code while ignoring the potential for it to throw and
+// have errors somewhat gracefully handled by this wrapper.
+//
+// I was considering mapping certain exception types like std::out_of_memory to
+// their vulkan equivalent (only when allowed by the API). In the end I think
+// it's just bloat and ultimately less informative than a 'VK_ERROR_UNKNOWN'
+// because then the caller knows that it probably wasn't triggered as part of
+// the standard Vulkan codepath. It simplifies things here too to just this.
 template <auto Func> struct HookExceptionWrapper;
 template <typename R, typename... Args, R (*Func)(Args...)>
 struct HookExceptionWrapper<Func> {
     static R call(Args... args) noexcept {
-
-        // If the function is void, we don't need to think about anything and
-        // can just call it.
-        if constexpr (std::is_void_v<R>) {
-            Func(args...);
-            return;
-        }
-
-        // If the function isn't void, we need to wrap it in a try block. Any
-        // exceptions we get (which came from our layer) should handled here
-        // by returning VK_ERROR_UNKNOWN when we can. Otherwise just terminate.
         try {
             return Func(args...);
         } catch (...) {
