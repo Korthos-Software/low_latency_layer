@@ -624,7 +624,7 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
 // their vulkan equivalent (only when allowed by the API). In the end I think
 // it's just bloat and ultimately less informative than a 'VK_ERROR_UNKNOWN'
 // because then the caller knows that it probably wasn't triggered as part of
-// the standard Vulkan codepath. It simplifies things here too to just this.
+// the standard Vulkan codepath.
 template <auto Func> struct HookExceptionWrapper;
 template <typename R, typename... Args, R (*Func)(Args...)>
 struct HookExceptionWrapper<Func> {
