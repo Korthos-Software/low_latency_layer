@@ -115,6 +115,7 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     INSTANCE_VTABLE_LOAD(EnumerateDeviceExtensionProperties);
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceQueueFamilyProperties2);
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceFeatures2);
+    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceSurfaceCapabilities2KHR);
 #undef INSTANCE_VTABLE_LOAD
 
     const auto lock = std::scoped_lock{layer_context.mutex};
@@ -207,7 +208,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     // explicitly ask for the extension when it creates the device.
 
     const auto was_antilag_requested =
-        requested.contains(VK_AMD_ANTI_LAG_EXTENSION_NAME);
+        requested.contains(VK_AMD_ANTI_LAG_EXTENSION_NAME) ||
+        requested.contains(VK_NV_LOW_LATENCY_2_EXTENSION_NAME);
 
     const auto context = layer_context.get_context(physical_device);
     if (!context->supports_required_extensions && was_antilag_requested) {
@@ -575,10 +577,19 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
         return VK_INCOMPLETE; // They gave us zero space to work with.
     }
 
-    pProperties[0] =
-        VkExtensionProperties{.extensionName = VK_AMD_ANTI_LAG_EXTENSION_NAME,
-                              .specVersion = VK_AMD_ANTI_LAG_SPEC_VERSION};
+    // If we're spoofing nvidia we want to provide their extension instead.
+    const auto extension_properties = [&]() -> VkExtensionProperties {
+        if (context->instance.layer.should_spoof_nvidia) {
+            return {.extensionName = VK_NV_LOW_LATENCY_2_EXTENSION_NAME,
+                    .specVersion = VK_NV_LOW_LATENCY_2_SPEC_VERSION};
+        }
+        return {.extensionName = VK_AMD_ANTI_LAG_EXTENSION_NAME,
+                .specVersion = VK_AMD_ANTI_LAG_SPEC_VERSION};
+    }();
+
+    pProperties[0] = extension_properties;
     count = 1;
+
     return VK_SUCCESS;
 }
 
@@ -589,6 +600,13 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
     const auto& vtable = context->instance.vtable;
 
     vtable.GetPhysicalDeviceFeatures2(physical_device, pFeatures);
+
+    // Don't provide AntiLag if we're trying to spoof nvidia.
+    // Nvidia uses VkSurfaceCapabilities2KHR to determine if a surface
+    // is capable of reflex instead of AMD's physical device switch found here.
+    if (context->instance.layer.should_spoof_nvidia) {
+        return;
+    }
 
     const auto feature = find_next<VkPhysicalDeviceAntiLagFeaturesAMD>(
         pFeatures, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD);
@@ -601,6 +619,55 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
 static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2KHR(
     VkPhysicalDevice physical_device, VkPhysicalDeviceFeatures2KHR* pFeatures) {
     return low_latency::GetPhysicalDeviceFeatures2(physical_device, pFeatures);
+}
+
+static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
+    VkPhysicalDevice physical_device,
+    const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
+    VkSurfaceCapabilities2KHR* pSurfaceCapabilities) {
+
+    const auto context = layer_context.get_context(physical_device);
+    const auto& vtable = context->instance.vtable;
+
+    vtable.GetPhysicalDeviceSurfaceCapabilities2KHR(
+        physical_device, pSurfaceInfo, pSurfaceCapabilities);
+
+    // Don't do this unless we're spoofing nvidia.
+    if (!context->instance.layer.should_spoof_nvidia) {
+        return;
+    }
+
+    const auto lsc = find_next<VkLatencySurfaceCapabilitiesNV>(
+        pSurfaceCapabilities,
+        VK_STRUCTURE_TYPE_LATENCY_SURFACE_CAPABILITIES_NV);
+
+    if (!lsc) {
+        return;
+    }
+
+    // I kind of eyeballed these!
+    const auto supported_modes = std::vector<VkPresentModeKHR>{
+        VK_PRESENT_MODE_IMMEDIATE_KHR,
+        VK_PRESENT_MODE_MAILBOX_KHR,
+        VK_PRESENT_MODE_FIFO_KHR,
+    };
+    const auto num_supported_modes =
+        static_cast<std::uint32_t>(std::size(supported_modes));
+
+    // They're asking how many we want to return.
+    if (!lsc->pPresentModes) {
+        lsc->presentModeCount = static_cast<std::uint32_t>(num_supported_modes);
+        return;
+    }
+
+    // Finally we can write what surfaces are capable.
+    const auto num_to_write =
+        std::min(lsc->presentModeCount, num_supported_modes);
+
+    std::ranges::copy_n(std::begin(supported_modes), num_to_write,
+                        lsc->pPresentModes);
+
+    lsc->presentModeCount = num_to_write;
 }
 
 static VKAPI_ATTR void VKAPI_CALL
@@ -665,6 +732,9 @@ static const auto instance_functions = func_map_t{
                low_latency::GetPhysicalDeviceFeatures2),
     HOOK_ENTRY("vkGetPhysicalDeviceFeatures2KHR",
                low_latency::GetPhysicalDeviceFeatures2KHR),
+
+    HOOK_ENTRY("vkGetPhysicalDeviceSurfaceCapabilities2KHR",
+               low_latency::GetPhysicalDeviceSurfaceCapabilities2KHR),
 };
 
 static const auto device_functions = func_map_t{

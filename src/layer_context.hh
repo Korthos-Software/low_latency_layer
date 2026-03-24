@@ -53,11 +53,17 @@ class LayerContext final : public Context {
     static constexpr auto SLEEP_AFTER_PRESENT_ENV =
         "LOW_LATENCY_LAYER_SLEEP_AFTER_PRESENT";
 
+    // If this is not null and set to exactly "1", then VK_NV_LOW_LATENCY2
+    // should be provided instead of VK_AMD_anti_lag.
+    static constexpr auto SPOOF_NVIDIA_ENV =
+        "LOW_LATENCY_LAYER_SPOOF_NV_LOWLATENCY2";
+
   public:
     std::mutex mutex;
     std::unordered_map<void*, std::shared_ptr<Context>> contexts;
 
     bool is_antilag_1_enabled = false;
+    bool should_spoof_nvidia = false;
 
   public:
     LayerContext();
