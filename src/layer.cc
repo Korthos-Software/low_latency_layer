@@ -677,6 +677,35 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     context->notify_antilag_update(*pData);
 }
 
+// Stubs for nvidia low latency 2.
+void GetLatencyTimingsNV(VkDevice device, VkSwapchainKHR swapchain,
+                         VkGetLatencyMarkerInfoNV* pLatencyMarkerInfo) {
+    // STUB
+}
+
+VkResult LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain,
+                        const VkLatencySleepInfoNV* pSleepInfo) {
+    // STUB
+    return VK_SUCCESS;
+}
+
+void QueueNotifyOutOfBandNV(VkQueue queue,
+                            const VkOutOfBandQueueTypeInfoNV* pQueueTypeInfo) {
+    // STUB
+}
+
+void SetLatencyMarkerNV(VkDevice device, VkSwapchainKHR swapchain,
+                        const VkSetLatencyMarkerInfoNV* pLatencyMarkerInfo) {
+    // STUB
+}
+
+VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
+                               const VkLatencySleepModeInfoNV* pSleepModeInfo) {
+
+    // STUB
+    return VK_SUCCESS;
+}
+
 } // namespace low_latency
 
 // This is a bit of template hackery which generates a wrapper function for each
@@ -752,6 +781,12 @@ static const auto device_functions = func_map_t{
     HOOK_ENTRY("vkQueuePresentKHR", low_latency::vkQueuePresentKHR),
 
     HOOK_ENTRY("vkAntiLagUpdateAMD", low_latency::AntiLagUpdateAMD),
+
+    HOOK_ENTRY("vkGetLatencyTimingsNV", low_latency::GetLatencyTimingsNV),
+    HOOK_ENTRY("vkLatencySleepNV", low_latency::LatencySleepNV),
+    HOOK_ENTRY("vkQueueNotifyOutOfBandNV", low_latency::QueueNotifyOutOfBandNV),
+    HOOK_ENTRY("vkSetLatencyMarkerNV", low_latency::SetLatencyMarkerNV),
+    HOOK_ENTRY("vkSetLatencySleepModeNV", low_latency::SetLatencySleepModeNV),
 };
 #undef HOOK_ENTRY
 
