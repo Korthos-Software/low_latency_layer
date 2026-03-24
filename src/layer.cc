@@ -116,6 +116,8 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceQueueFamilyProperties2);
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceFeatures2);
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceSurfaceCapabilities2KHR);
+    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceProperties2);
+    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceProperties2KHR);
 #undef INSTANCE_VTABLE_LOAD
 
     const auto lock = std::scoped_lock{layer_context.mutex};
@@ -560,21 +562,15 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
     const auto context = layer_context.get_context(physical_device);
     const auto& vtable = context->instance.vtable;
 
-    // Not asking about our layer - just forward it.
-    if (!pLayerName || std::string_view{pLayerName} != LAYER_NAME) {
+    // This used to be a bit less complicated because we could rely on the
+    // loader mashing everything together provided we gave our anti lag
+    // extension in our JSON manifest. We now try to spoof nvidia and what we
+    // provide is dynamic. The JSON isn't dynamic. So we can't use that anymore!
+
+    // Simplest case, they're not asking about us so we can happily forward it.
+    if (pLayerName && std::string_view{pLayerName} != LAYER_NAME) {
         return vtable.EnumerateDeviceExtensionProperties(
             physical_device, pLayerName, pPropertyCount, pProperties);
-    }
-
-    auto& count = *pPropertyCount;
-    // !pProperties means they're querying how much space they need.
-    if (!pProperties) {
-        count = 1;
-        return VK_SUCCESS;
-    }
-
-    if (!count) {
-        return VK_INCOMPLETE; // They gave us zero space to work with.
     }
 
     // If we're spoofing nvidia we want to provide their extension instead.
@@ -587,8 +583,52 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
                 .specVersion = VK_AMD_ANTI_LAG_SPEC_VERSION};
     }();
 
-    pProperties[0] = extension_properties;
-    count = 1;
+    if (pLayerName) {
+        // This query is for our layer specifically.
+
+        if (!pProperties) { // Querying how much space they need.
+            *pPropertyCount = 1;
+            return VK_SUCCESS;
+        }
+
+        if (!*pPropertyCount) { // They gave us zero space to work with.
+            return VK_INCOMPLETE;
+        }
+
+        pProperties[0] = extension_properties;
+        *pPropertyCount = 1;
+
+        return VK_SUCCESS;
+    }
+
+    auto target_count = std::uint32_t{0};
+    if (const auto result = vtable.EnumerateDeviceExtensionProperties(
+            physical_device, nullptr, &target_count, nullptr);
+        result != VK_SUCCESS) {
+
+        return result;
+    }
+    target_count += 1;
+
+    if (!pProperties) {
+        *pPropertyCount = target_count;
+        return VK_SUCCESS;
+    }
+
+    auto written = *pPropertyCount;
+    if (const auto result = vtable.EnumerateDeviceExtensionProperties(
+            physical_device, nullptr, &written, pProperties);
+        result != VK_SUCCESS) {
+
+        return result;
+    }
+
+    if (*pPropertyCount < target_count) {
+        return VK_INCOMPLETE;
+    }
+
+    pProperties[target_count - 1] = extension_properties;
+    *pPropertyCount = target_count;
 
     return VK_SUCCESS;
 }
@@ -618,7 +658,31 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
 
 static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2KHR(
     VkPhysicalDevice physical_device, VkPhysicalDeviceFeatures2KHR* pFeatures) {
-    return low_latency::GetPhysicalDeviceFeatures2(physical_device, pFeatures);
+
+    return GetPhysicalDeviceFeatures2(physical_device, pFeatures);
+}
+
+static VKAPI_ATTR void VKAPI_CALL
+GetPhysicalDeviceProperties2(VkPhysicalDevice physical_device,
+                             VkPhysicalDeviceProperties2* pProperties) {
+
+    const auto context = layer_context.get_context(physical_device);
+    const auto& vtable = context->instance.vtable;
+
+    vtable.GetPhysicalDeviceProperties2(physical_device, pProperties);
+
+    constexpr auto NVIDIA_VENDOR_ID = 0x10DE;
+    constexpr auto NVIDIA_DEVICE_ID = 0x2684; // rtx 4080 i think?
+    if (context->instance.layer.should_spoof_nvidia) {
+        pProperties->properties.vendorID = NVIDIA_VENDOR_ID;
+        pProperties->properties.deviceID = NVIDIA_DEVICE_ID;
+    }
+}
+
+static VKAPI_ATTR void VKAPI_CALL
+GetPhysicalDeviceProperties2KHR(VkPhysicalDevice physical_device,
+                                VkPhysicalDeviceProperties2* pProperties) {
+    return GetPhysicalDeviceProperties2(physical_device, pProperties);
 }
 
 static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
@@ -764,6 +828,11 @@ static const auto instance_functions = func_map_t{
 
     HOOK_ENTRY("vkGetPhysicalDeviceSurfaceCapabilities2KHR",
                low_latency::GetPhysicalDeviceSurfaceCapabilities2KHR),
+
+    HOOK_ENTRY("vkGetPhysicalDeviceProperties2",
+               low_latency::GetPhysicalDeviceProperties2),
+    HOOK_ENTRY("vkGetPhysicalDeviceProperties2KHR",
+               low_latency::GetPhysicalDeviceProperties2KHR),
 };
 
 static const auto device_functions = func_map_t{
@@ -787,6 +856,7 @@ static const auto device_functions = func_map_t{
     HOOK_ENTRY("vkQueueNotifyOutOfBandNV", low_latency::QueueNotifyOutOfBandNV),
     HOOK_ENTRY("vkSetLatencyMarkerNV", low_latency::SetLatencyMarkerNV),
     HOOK_ENTRY("vkSetLatencySleepModeNV", low_latency::SetLatencySleepModeNV),
+
 };
 #undef HOOK_ENTRY
 
