@@ -294,6 +294,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     DEVICE_VTABLE_LOAD(QueueSubmit2KHR);
     DEVICE_VTABLE_LOAD(GetCalibratedTimestampsKHR);
     DEVICE_VTABLE_LOAD(ResetQueryPoolEXT);
+    DEVICE_VTABLE_LOAD(SignalSemaphore);
 #undef DEVICE_VTABLE_LOAD
 
     const auto key = layer_context.get_key(*pDevice);
@@ -749,6 +750,30 @@ void GetLatencyTimingsNV(VkDevice device, VkSwapchainKHR swapchain,
 
 VkResult LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain,
                         const VkLatencySleepInfoNV* pSleepInfo) {
+
+    const auto context = layer_context.get_context(device);
+    assert(pSleepInfo);
+
+    // Keep going.
+    if (pSleepInfo->signalSemaphore) {
+
+        // This is a hack obviously. I will have to associate queue submits with
+        // a semaphore and signal it correctly later. I'm not sure about the
+        // implications regarding multithreading, will have to think a bit about how to do this cleanly
+        // with our current anti lag.
+        static std::uint32_t counter = 1024;
+
+        const auto ssi = VkSemaphoreSignalInfo{
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+            .semaphore = pSleepInfo->signalSemaphore,
+            .value = counter,
+        };
+
+        // So we don't wait and this becomes a no-op instead of a freeze!
+        context->vtable.SignalSemaphore(device, &ssi);
+
+        ++counter;
+    }
     // STUB
     return VK_SUCCESS;
 }
@@ -765,6 +790,9 @@ void SetLatencyMarkerNV(VkDevice device, VkSwapchainKHR swapchain,
 
 VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
                                const VkLatencySleepModeInfoNV* pSleepModeInfo) {
+
+    const auto context = layer_context.get_context(device);
+    assert(pSleepModeInfo);
 
     // STUB
     return VK_SUCCESS;
