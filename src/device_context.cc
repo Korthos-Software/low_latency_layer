@@ -1,5 +1,4 @@
 #include "device_context.hh"
-#include "queue_context.hh"
 
 #include <time.h>
 #include <utility>
@@ -23,7 +22,6 @@ DeviceContext::DeviceContext(InstanceContext& parent_instance,
 }
 
 DeviceContext::~DeviceContext() {
-    this->present_queue.reset();
     // We will let the destructor handle clearing here, but they should be
     // unique by now (ie, removed from the layer's context map).
     for (const auto& [queue, queue_context] : this->queues) {
@@ -94,6 +92,9 @@ DeviceContext::Clock::ticks_to_time(const std::uint64_t& ticks) const {
 }
 
 void DeviceContext::sleep_in_input() {
+    // TODO
+
+    /*
     // Present hasn't happened yet, we don't know what queue to attack.
     if (!this->present_queue) {
         return;
@@ -121,32 +122,30 @@ void DeviceContext::sleep_in_input() {
     // would get huge frame drops, loss of throughput, and the GPU would even
     // clock down. So naturally I am concerned about this approach, but it seems
     // to perform well so far in my own testing and is just beautifully elegant.
+    */
 }
 
-void DeviceContext::notify_antilag_update(const VkAntiLagDataAMD& data) {
-    this->antilag_mode = data.mode;
-    this->antilag_fps = data.maxFPS; // TODO
+void DeviceContext::update_swapchain_infos(
+    const std::optional<VkSwapchainKHR> target,
+    const std::chrono::milliseconds& present_delay,
+    const bool was_low_latency_requested) {
 
-    // This might not be provided (probably just to set some settings?).
-    if (!data.pPresentationInfo) {
+    const auto write = SwapchainInfo{
+        .present_delay = present_delay,
+        .was_low_latency_requested = was_low_latency_requested,
+    };
+
+    if (target.has_value()) {
+        const auto iter = this->swapchain_infos.find(*target);
+        assert(iter != std::end(this->swapchain_infos)); // Must exist (spec).
+        iter->second = write;
         return;
     }
 
-    // Only care about the input stage for now.
-    if (data.pPresentationInfo->stage != VK_ANTI_LAG_STAGE_INPUT_AMD) {
-        return;
+    // If we don't have a target (AMD's anti_lag), just write it to everything.
+    for (auto& iter : this->swapchain_infos) {
+        iter.second = write;
     }
-
-    if (this->antilag_mode != VK_ANTI_LAG_MODE_ON_AMD) {
-        return;
-    }
-
-    this->sleep_in_input();
-}
-
-void DeviceContext::notify_queue_present(const QueueContext& queue) {
-    assert(this->queues.contains(queue.queue));
-    this->present_queue = this->queues[queue.queue];
 }
 
 } // namespace low_latency

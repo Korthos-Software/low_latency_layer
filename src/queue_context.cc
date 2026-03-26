@@ -157,21 +157,20 @@ void QueueContext::notify_present(const VkPresentInfoKHR& info) {
     this->drain_submissions_to_frame();
     this->drain_frames_to_timings();
 
-    // Call up to notify the device now that we're done with this frame.
-    // We have to do this because antilag 2 data is sent to the device, not
-    // any particular queue.
-    this->device_context.notify_queue_present(*this);
-
     // We should only sleep in present if two conditions are met:
     //     1. Our antilag_mode isn't set to on, because otherwise the sleep will
     //        be done in input and with far better results.
     //     2. The 'is_antilag_1_enabled' flag, which exists at the layer's
     //        context, is set.
+    //        
+    /*
+     * WIP REFLEX
     if (this->device_context.antilag_mode != VK_ANTI_LAG_MODE_ON_AMD &&
         this->device_context.instance.layer.is_antilag_1_enabled) {
 
         this->sleep_in_present();
     }
+    */
 }
 
 const auto debug_log_time2 = [](auto& stream, const auto& diff) {

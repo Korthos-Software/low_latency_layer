@@ -28,6 +28,13 @@ struct DeviceContext final : public Context {
     const VkDevice device;
     const VkuDeviceDispatchTable vtable;
 
+    // Tiny struct to represent any swapchain's low latency state.
+    struct SwapchainInfo {
+        std::chrono::milliseconds present_delay = std::chrono::milliseconds{0};
+        bool was_low_latency_requested = false;
+    };
+    std::unordered_map<VkSwapchainKHR, SwapchainInfo> swapchain_infos{};
+
     std::unordered_map<VkQueue, std::shared_ptr<QueueContext>> queues;
 
     struct Clock {
@@ -58,15 +65,6 @@ struct DeviceContext final : public Context {
     };
     std::unique_ptr<Clock> clock;
 
-    std::uint32_t antilag_fps = 0; // TODO
-    VkAntiLagModeAMD antilag_mode = VK_ANTI_LAG_MODE_DRIVER_CONTROL_AMD;
-
-    // The queue used in the last present.
-    std::shared_ptr<QueueContext> present_queue;
-
-  private:
-    void sleep_in_input();
-
   public:
     DeviceContext(InstanceContext& parent_instance,
                   PhysicalDeviceContext& parent_physical,
@@ -75,9 +73,13 @@ struct DeviceContext final : public Context {
     virtual ~DeviceContext();
 
   public:
-    void notify_antilag_update(const VkAntiLagDataAMD& data);
+    void sleep_in_input();
 
-    void notify_queue_present(const QueueContext& queue);
+    // Updates the settings associated with that swapchain. If none is provided
+    // all swapchains are set to this value.
+    void update_swapchain_infos(const std::optional<VkSwapchainKHR> target,
+                                const std::chrono::milliseconds& present_delay,
+                                const bool was_low_latency_requested);
 };
 
 }; // namespace low_latency

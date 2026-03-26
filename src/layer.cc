@@ -295,6 +295,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     DEVICE_VTABLE_LOAD(GetCalibratedTimestampsKHR);
     DEVICE_VTABLE_LOAD(ResetQueryPoolEXT);
     DEVICE_VTABLE_LOAD(SignalSemaphore);
+    DEVICE_VTABLE_LOAD(CreateSwapchainKHR);
+    DEVICE_VTABLE_LOAD(DestroySwapchainKHR);
 #undef DEVICE_VTABLE_LOAD
 
     const auto key = layer_context.get_key(*pDevice);
@@ -735,17 +737,57 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
     lsc->presentModeCount = num_to_write;
 }
 
+static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
+    VkDevice device, const VkSwapchainCreateInfoKHR* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator, VkSwapchainKHR* pSwapchain) {
+
+    const auto context = layer_context.get_context(device);
+
+    if (const auto result = context->vtable.CreateSwapchainKHR(
+            device, pCreateInfo, pAllocator, pSwapchain);
+        result != VK_SUCCESS) {
+
+        return result;
+    }
+
+    assert(context->swapchain_infos.try_emplace(*pSwapchain).second);
+
+    return VK_SUCCESS;
+}
+
+static VKAPI_ATTR void VKAPI_CALL
+DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
+                    const VkAllocationCallbacks* pAllocator) {
+    const auto context = layer_context.get_context(device);
+
+    assert(context->swapchain_infos.erase(swapchain));
+
+    context->vtable.DestroySwapchainKHR(device, swapchain, pAllocator);
+}
+
 static VKAPI_ATTR void VKAPI_CALL
 AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     const auto context = layer_context.get_context(device);
     assert(pData);
-    context->notify_antilag_update(*pData);
-}
 
-// Stubs for nvidia low latency 2.
-void GetLatencyTimingsNV(VkDevice device, VkSwapchainKHR swapchain,
-                         VkGetLatencyMarkerInfoNV* pLatencyMarkerInfo) {
-    // STUB
+    // AL2 is a synchronous while NVIDIA's low_latencty2 is asynchronous.
+    // It's difficult to model an asynchronous impl inside a synchronous impl,
+    // but it's easy to do the inverse. As a result, we should implement
+    // NVIDIA's method and then have a working AL2 implementation follow using
+    // that existing code path.
+
+    using namespace std::chrono;
+    const auto present_delay = duration_cast<milliseconds>(1s / pData->maxFPS);
+    context->update_swapchain_infos(std::nullopt, present_delay,
+                                    (pData->mode == VK_ANTI_LAG_MODE_ON_AMD));
+
+    if (!pData->pPresentationInfo) {
+        return;
+    }
+
+    if (pData->pPresentationInfo->stage == VK_ANTI_LAG_STAGE_INPUT_AMD) {
+        context->sleep_in_input();
+    }
 }
 
 VkResult LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain,
@@ -754,48 +796,52 @@ VkResult LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain,
     const auto context = layer_context.get_context(device);
     assert(pSleepInfo);
 
-    // Keep going.
-    if (pSleepInfo->signalSemaphore) {
+    // TODO sleep here
 
-        // This is a hack obviously. I will have to associate queue submits with
-        // a semaphore and signal it correctly later. I'm not sure about the
-        // implications regarding multithreading, will have to think a bit about how to do this cleanly
-        // with our current anti lag.
-        static std::uint32_t counter = 1024;
-
-        const auto ssi = VkSemaphoreSignalInfo{
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
-            .semaphore = pSleepInfo->signalSemaphore,
-            .value = counter,
-        };
-
-        // So we don't wait and this becomes a no-op instead of a freeze!
-        context->vtable.SignalSemaphore(device, &ssi);
-
-        ++counter;
-    }
-    // STUB
     return VK_SUCCESS;
 }
 
 void QueueNotifyOutOfBandNV(VkQueue queue,
                             const VkOutOfBandQueueTypeInfoNV* pQueueTypeInfo) {
-    // STUB
+    // This is really thoughtful from NVIDIA. Having the application explicitly
+    // state which queues should be ignored for latency evaluation is far
+    // superior to AMD's guessing game.
+    // Kind of interesting how you can't turn it back on once it's turned off.
+    // Also I really have no idea why pQueueTypeInfo's VkOutOfBandQueueTypeNV
+    // enum even exists (I guess we will find out later when nothing works).
+    const auto context = layer_context.get_context(queue);
+
+    context->should_ignore_latency = true;
+}
+
+VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
+                               const VkLatencySleepModeInfoNV* pSleepModeInfo) {
+    const auto context = layer_context.get_context(device);
+
+    using namespace std::chrono;
+    if (pSleepModeInfo) {
+        context->update_swapchain_infos(
+            swapchain, milliseconds{pSleepModeInfo->minimumIntervalUs},
+            pSleepModeInfo->lowLatencyMode);
+    } else {
+        // If pSleepModeInfo is nullptr, it means no delay and no low latency.
+        context->update_swapchain_infos(swapchain, milliseconds{0}, false);
+    }
+    return VK_SUCCESS;
 }
 
 void SetLatencyMarkerNV(VkDevice device, VkSwapchainKHR swapchain,
                         const VkSetLatencyMarkerInfoNV* pLatencyMarkerInfo) {
     // STUB
+    // We will probably end up making use of this in the future, but afaict it's
+    // not relevant for this layer's operation just yet. This function is
+    // NVIDIA's way of giving developers insight into their render pipeline.
 }
 
-VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
-                               const VkLatencySleepModeInfoNV* pSleepModeInfo) {
-
-    const auto context = layer_context.get_context(device);
-    assert(pSleepModeInfo);
-
+void GetLatencyTimingsNV(VkDevice device, VkSwapchainKHR swapchain,
+                         VkGetLatencyMarkerInfoNV* pLatencyMarkerInfo) {
     // STUB
-    return VK_SUCCESS;
+    // Just like SetLatencyMarkerNV this isn't relevant for us just yet.
 }
 
 } // namespace low_latency
@@ -885,6 +931,8 @@ static const auto device_functions = func_map_t{
     HOOK_ENTRY("vkSetLatencyMarkerNV", low_latency::SetLatencyMarkerNV),
     HOOK_ENTRY("vkSetLatencySleepModeNV", low_latency::SetLatencySleepModeNV),
 
+    HOOK_ENTRY("vkCreateSwapchainKHR", low_latency::CreateSwapchainKHR),
+    HOOK_ENTRY("vkDestroySwapchainKHR", low_latency::DestroySwapchainKHR),
 };
 #undef HOOK_ENTRY
 

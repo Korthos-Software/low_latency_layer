@@ -57,6 +57,11 @@ class QueueContext final : public Context {
 
     std::unique_ptr<TimestampPool> timestamp_pool;
 
+    // NVIDIA's extension lets the application explicitly state that this queue
+    // does not contribute to the frame. AMD's extension has no such mechanism -
+    // so this will always be false.
+    bool should_ignore_latency = false;
+
   public:
     // Potentially in flight queue submissions that come from this queue.
     struct Submission {
