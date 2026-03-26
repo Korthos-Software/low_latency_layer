@@ -750,7 +750,19 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
         return result;
     }
 
-    assert(context->swapchain_infos.try_emplace(*pSwapchain).second);
+    auto addition = DeviceContext::SwapchainInfo{
+        .present_delay = std::chrono::milliseconds{0},
+        .was_low_latency_requested = false,
+    };
+
+    if (const auto slci = find_next<VkSwapchainLatencyCreateInfoNV>(
+            pCreateInfo, VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV);
+        slci) {
+        
+        addition.was_low_latency_requested = slci->latencyModeEnable;
+    }
+
+    assert(context->swapchain_infos.try_emplace(*pSwapchain, addition).second);
 
     return VK_SUCCESS;
 }
@@ -776,8 +788,11 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     // NVIDIA's method and then have a working AL2 implementation follow using
     // that existing code path.
 
-    using namespace std::chrono;
-    const auto present_delay = duration_cast<milliseconds>(1s / pData->maxFPS);
+    const auto present_delay = [&]() { // lambda abuse?
+        using namespace std::chrono;
+        return duration_cast<milliseconds>(1s / pData->maxFPS);
+    }();
+
     context->update_swapchain_infos(std::nullopt, present_delay,
                                     (pData->mode == VK_ANTI_LAG_MODE_ON_AMD));
 
@@ -818,14 +833,15 @@ VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
                                const VkLatencySleepModeInfoNV* pSleepModeInfo) {
     const auto context = layer_context.get_context(device);
 
-    using namespace std::chrono;
     if (pSleepModeInfo) {
         context->update_swapchain_infos(
-            swapchain, milliseconds{pSleepModeInfo->minimumIntervalUs},
+            swapchain,
+            std::chrono::milliseconds{pSleepModeInfo->minimumIntervalUs},
             pSleepModeInfo->lowLatencyMode);
     } else {
         // If pSleepModeInfo is nullptr, it means no delay and no low latency.
-        context->update_swapchain_infos(swapchain, milliseconds{0}, false);
+        context->update_swapchain_infos(swapchain, std::chrono::milliseconds{0},
+                                        false);
     }
     return VK_SUCCESS;
 }
