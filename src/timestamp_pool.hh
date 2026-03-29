@@ -18,11 +18,12 @@
 #include <unordered_set>
 #include <vector>
 
-#include "device_context.hh"
+#include "device_clock.hh"
 
 namespace low_latency {
 
 class QueueContext;
+class DeviceContext;
 
 class TimestampPool final {
   private:
@@ -119,20 +120,15 @@ class TimestampPool final {
         void setup_command_buffers(const Handle& tail,
                                    const QueueContext& queue_context) const;
 
-        // Attempts to get_time, but returns an optional if it's not available
-        // yet.
-        std::optional<DeviceContext::Clock::time_point_t> get_time();
+      public:
+        // Attempts to get the time - optional if it's not available yet.
+        std::optional<DeviceClock::time_point_t> get_time();
 
-        // Calls get_time() repeatedly under a spinlock, or gives up at
-        // time_point_t and returns std::nullopt.
-        std::optional<DeviceContext::Clock::time_point_t>
-        get_time_spinlock(const DeviceContext::Clock::time_point_t& until);
-
-        // Calls get_time() repeatedly under a spinlock until it's available.
-        DeviceContext::Clock::time_point_t get_time_spinlock();
+        // Waits until the time is available and returns it.
+        DeviceClock::time_point_t await_time();
 
         // Calls get_time with the assumption it's already available.
-        DeviceContext::Clock::time_point_t get_time_required();
+        DeviceClock::time_point_t get_time_required();
     };
 
   public:

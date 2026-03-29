@@ -152,19 +152,18 @@ void TimestampPool::Handle::setup_command_buffers(
     THROW_NON_VKSUCCESS(vtable.EndCommandBuffer(tail.command_buffer));
 }
 
-std::optional<DeviceContext::Clock::time_point_t>
-TimestampPool::Handle::get_time() {
-    const auto& device_ctx = this->timestamp_pool.queue_context.device_context;
-    const auto& vtable = device_ctx.vtable;
+struct QueryResult {
+    std::uint64_t value;
+    std::uint64_t available;
+};
+std::optional<DeviceClock::time_point_t> TimestampPool::Handle::get_time() {
+    const auto& context = this->timestamp_pool.queue_context.device_context;
+    const auto& vtable = context.vtable;
 
-    struct QueryResult {
-        std::uint64_t value;
-        std::uint64_t available;
-    };
     auto query_result = QueryResult{};
 
     const auto result = vtable.GetQueryPoolResults(
-        device_ctx.device, query_pool,
+        context.device, query_pool,
         static_cast<std::uint32_t>(this->query_index), 1, sizeof(query_result),
         &query_result, sizeof(query_result),
         VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
@@ -177,30 +176,31 @@ TimestampPool::Handle::get_time() {
         return std::nullopt;
     }
 
-    return device_ctx.clock->ticks_to_time(query_result.value);
+    return context.clock->ticks_to_time(query_result.value);
 }
 
-std::optional<DeviceContext::Clock::time_point_t>
-TimestampPool::Handle::get_time_spinlock(
-    const DeviceContext::Clock::time_point_t& until) {
+DeviceClock::time_point_t TimestampPool::Handle::await_time() {
+    const auto& context = this->timestamp_pool.queue_context.device_context;
+    const auto& vtable = context.vtable;
 
-    auto time = this->get_time();
-    for (; !time.has_value(); time = this->get_time()) {
-        if (const auto now = DeviceContext::Clock::now(); now >= until) {
-            break;
-        }
-    }
-    return time;
+    struct QueryResult {
+        std::uint64_t value;
+        std::uint64_t available;
+    };
+    auto query_result = QueryResult{};
+
+    THROW_NON_VKSUCCESS(vtable.GetQueryPoolResults(
+        context.device, query_pool,
+        static_cast<std::uint32_t>(this->query_index), 1, sizeof(query_result),
+        &query_result, sizeof(query_result),
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT |
+            VK_QUERY_RESULT_WAIT_BIT));
+    assert(query_result.available);
+
+    return context.clock->ticks_to_time(query_result.value);
 }
 
-DeviceContext::Clock::time_point_t TimestampPool::Handle::get_time_spinlock() {
-    constexpr auto max = DeviceContext::Clock::time_point_t::max();
-    const auto time = this->get_time_spinlock(max);
-    assert(time.has_value());
-    return *time;
-}
-
-DeviceContext::Clock::time_point_t TimestampPool::Handle::get_time_required() {
+DeviceClock::time_point_t TimestampPool::Handle::get_time_required() {
     const auto time = this->get_time();
     assert(time.has_value());
     return *time;

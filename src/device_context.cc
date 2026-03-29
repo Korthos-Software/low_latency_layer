@@ -1,6 +1,5 @@
 #include "device_context.hh"
 
-#include <time.h>
 #include <utility>
 #include <vulkan/vulkan_core.h>
 
@@ -9,15 +8,15 @@ namespace low_latency {
 DeviceContext::DeviceContext(InstanceContext& parent_instance,
                              PhysicalDeviceContext& parent_physical_device,
                              const VkDevice& device,
-                             const bool was_antilag_requested,
+                             const bool was_capability_requested,
                              VkuDeviceDispatchTable&& vtable)
     : instance(parent_instance), physical_device(parent_physical_device),
-      was_antilag_requested(was_antilag_requested), device(device),
+      was_capability_requested(was_capability_requested), device(device),
       vtable(std::move(vtable)) {
 
     // Only create our clock if we can support creating it.
     if (this->physical_device.supports_required_extensions) {
-        this->clock = std::make_unique<Clock>(*this);
+        this->clock = std::make_unique<DeviceClock>(*this);
     }
 }
 
@@ -29,72 +28,10 @@ DeviceContext::~DeviceContext() {
     }
 }
 
-DeviceContext::Clock::Clock(const DeviceContext& context) : device(context) {
-    this->calibrate();
-}
-
-DeviceContext::Clock::~Clock() {}
-
-DeviceContext::Clock::time_point_t DeviceContext::Clock::now() {
-    auto ts = timespec{};
-    if (clock_gettime(CLOCK_MONOTONIC, &ts)) {
-        throw errno;
-    }
-
-    return time_point_t{std::chrono::seconds{ts.tv_sec} +
-                        std::chrono::nanoseconds{ts.tv_nsec}};
-}
-
-void DeviceContext::Clock::calibrate() {
-    const auto infos = std::vector<VkCalibratedTimestampInfoKHR>{
-        {VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT, nullptr,
-         VK_TIME_DOMAIN_DEVICE_EXT},
-        {VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_EXT, nullptr,
-         VK_TIME_DOMAIN_CLOCK_MONOTONIC_EXT}};
-
-    struct CalibratedResult {
-        std::uint64_t device;
-        std::uint64_t host;
-    };
-    auto calibrated_result = CalibratedResult{};
-
-    THROW_NON_VKSUCCESS(device.vtable.GetCalibratedTimestampsKHR(
-        device.device, 2, std::data(infos), &calibrated_result.device,
-        &this->error_bound));
-
-    this->device_ticks = calibrated_result.device;
-    this->host_ns = calibrated_result.host;
-}
-
-DeviceContext::Clock::time_point_t
-DeviceContext::Clock::ticks_to_time(const std::uint64_t& ticks) const {
-    const auto& pd = device.physical_device.properties;
-    const auto ns_tick = static_cast<double>(pd->limits.timestampPeriod);
-
-    const auto diff = [&]() -> auto {
-        auto a = this->device_ticks;
-        auto b = ticks;
-        const auto is_negative = a > b;
-        if (is_negative) {
-            std::swap(a, b);
-        }
-        const auto abs_diff = b - a;
-        assert(abs_diff <= std::numeric_limits<std::int64_t>::max());
-        const auto signed_abs_diff = static_cast<std::int64_t>(abs_diff);
-        return is_negative ? -signed_abs_diff : signed_abs_diff;
-    }();
-
-    const auto diff_nsec =
-        static_cast<std::int64_t>(static_cast<double>(diff) * ns_tick + 0.5);
-    const auto delta = std::chrono::nanoseconds(
-        this->host_ns + static_cast<std::uint64_t>(diff_nsec));
-    return time_point_t{delta};
-}
-
+/*
 void DeviceContext::sleep_in_input() {
     // TODO
 
-    /*
     // Present hasn't happened yet, we don't know what queue to attack.
     if (!this->present_queue) {
         return;
@@ -122,30 +59,36 @@ void DeviceContext::sleep_in_input() {
     // would get huge frame drops, loss of throughput, and the GPU would even
     // clock down. So naturally I am concerned about this approach, but it seems
     // to perform well so far in my own testing and is just beautifully elegant.
-    */
 }
+*/
 
-void DeviceContext::update_swapchain_infos(
+void DeviceContext::update_params(
     const std::optional<VkSwapchainKHR> target,
     const std::chrono::milliseconds& present_delay,
     const bool was_low_latency_requested) {
 
-    const auto write = SwapchainInfo{
-        .present_delay = present_delay,
-        .was_low_latency_requested = was_low_latency_requested,
-    };
-
-    if (target.has_value()) {
-        const auto iter = this->swapchain_infos.find(*target);
-        assert(iter != std::end(this->swapchain_infos)); // Must exist (spec).
-        iter->second = write;
+    // If we don't have a target (AMD's anti_lag doesn't differentiate between
+    // swapchains), just write it to everything.
+    if (!target.has_value()) {
+        for (auto& iter : this->swapchain_monitors) {
+            iter.second.update_params(was_low_latency_requested, present_delay);
+        }
         return;
     }
 
-    // If we don't have a target (AMD's anti_lag), just write it to everything.
-    for (auto& iter : this->swapchain_infos) {
-        iter.second = write;
-    }
+    const auto iter = this->swapchain_monitors.find(*target);
+    assert(iter != std::end(this->swapchain_monitors));
+    iter->second.update_params(was_low_latency_requested, present_delay);
+}
+
+void DeviceContext::notify_present(
+    const VkSwapchainKHR& swapchain,
+    const QueueContext::submissions_t& submissions) {
+
+    const auto iter = this->swapchain_monitors.find(swapchain);
+    assert(iter != std::end(this->swapchain_monitors));
+
+    iter->second.notify_present(submissions);
 }
 
 } // namespace low_latency

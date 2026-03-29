@@ -4,6 +4,7 @@
 #include "instance_context.hh"
 
 #include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_core.h>
 
 #include "context.hh"
 
@@ -17,7 +18,8 @@ class PhysicalDeviceContext final : public Context {
     static constexpr auto required_extensions = {
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
         VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME,
-        VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME};
+        VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME,
+        VK_KHR_PRESENT_ID_EXTENSION_NAME};
 
   public:
     InstanceContext& instance;
@@ -29,8 +31,8 @@ class PhysicalDeviceContext final : public Context {
     using queue_properties_t = std::vector<VkQueueFamilyProperties2>;
     std::unique_ptr<const queue_properties_t> queue_properties;
 
-    // Will be set to true in the constructor if the physical device supports
-    // everything we need to track gpu timing data.
+    // Will be true if the physical device supports everything in
+    // this->required_extensions.
     bool supports_required_extensions = false;
 
   public:

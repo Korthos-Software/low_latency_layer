@@ -14,7 +14,9 @@
 #include <vulkan/vulkan.hpp>
 #include <vulkan/vulkan_core.h>
 
+#include "device_clock.hh"
 #include "device_context.hh"
+#include "helper.hh"
 #include "instance_context.hh"
 #include "layer_context.hh"
 #include "queue_context.hh"
@@ -27,46 +29,6 @@ namespace {
 LayerContext layer_context;
 
 } // namespace
-
-// Small templates which allow us to SFINAE find pNext structs.
-template <typename T>
-static T* find_next(void* const head, const VkStructureType& stype) {
-    for (auto i = reinterpret_cast<VkBaseOutStructure*>(head)->pNext; i;
-         i = i->pNext) {
-
-        if (i->sType == stype) {
-            return reinterpret_cast<T*>(i);
-        }
-    }
-    return nullptr;
-}
-
-template <typename T>
-static const T* find_next(const void* const head,
-                          const VkStructureType& stype) {
-
-    for (auto i = reinterpret_cast<const VkBaseInStructure*>(head)->pNext; i;
-         i = i->pNext) {
-
-        if (i->sType == stype) {
-            return reinterpret_cast<const T*>(i);
-        }
-    }
-    return nullptr;
-}
-
-template <typename T>
-static const T* find_link(const void* const head,
-                          const VkStructureType& stype) {
-    for (auto info = find_next<T>(head, stype); info;
-         info = find_next<T>(info, stype)) {
-
-        if (info->function == VK_LAYER_LINK_INFO) {
-            return reinterpret_cast<const T*>(info);
-        }
-    }
-    return nullptr;
-}
 
 static VKAPI_ATTR VkResult VKAPI_CALL
 CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
@@ -209,12 +171,12 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     // is not the case with AL2, because the vulkan application has to
     // explicitly ask for the extension when it creates the device.
 
-    const auto was_antilag_requested =
+    const auto was_capability_requested =
         requested.contains(VK_AMD_ANTI_LAG_EXTENSION_NAME) ||
         requested.contains(VK_NV_LOW_LATENCY_2_EXTENSION_NAME);
 
     const auto context = layer_context.get_context(physical_device);
-    if (!context->supports_required_extensions && was_antilag_requested) {
+    if (!context->supports_required_extensions && was_capability_requested) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
@@ -305,7 +267,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     assert(!layer_context.contexts.contains(key));
     layer_context.contexts.try_emplace(
         key, std::make_shared<DeviceContext>(context->instance, *context,
-                                             *pDevice, was_antilag_requested,
+                                             *pDevice, was_capability_requested,
                                              std::move(vtable)));
 
     return VK_SUCCESS;
@@ -443,7 +405,7 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     // more explicit + insurance if that changes.
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
-    const auto now = DeviceContext::Clock::now();
+    const auto now = DeviceClock::now();
 
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
@@ -451,7 +413,9 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
             const auto head_handle = context->timestamp_pool->acquire();
             const auto tail_handle = context->timestamp_pool->acquire();
             head_handle->setup_command_buffers(*tail_handle, *context);
-            context->notify_submit(submit, head_handle, tail_handle, now);
+
+            context->notify_submit(extract_present_id(submit), head_handle,
+                                   tail_handle, now);
 
             handles.emplace_back(head_handle);
             handles.emplace_back(tail_handle);
@@ -494,7 +458,7 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
-    const auto now = DeviceContext::Clock::now();
+    const auto now = DeviceClock::now();
 
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
@@ -502,7 +466,9 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
             const auto head_handle = context->timestamp_pool->acquire();
             const auto tail_handle = context->timestamp_pool->acquire();
             head_handle->setup_command_buffers(*tail_handle, *context);
-            context->notify_submit(submit, head_handle, tail_handle, now);
+
+            context->notify_submit(extract_present_id(submit), head_handle,
+                                   tail_handle, now);
 
             handles.emplace_back(head_handle);
             handles.emplace_back(tail_handle);
@@ -553,7 +519,14 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
         return res;
     }
 
-    context->notify_present(*present_info);
+    const auto pid = find_next<VkPresentIdKHR>(
+        present_info, VK_STRUCTURE_TYPE_PRESENT_ID_KHR);
+
+    for (auto i = std::uint32_t{0}; i < present_info->swapchainCount; ++i) {
+        const auto& swapchain = present_info->pSwapchains[i];
+        const auto present_id = pid ? pid->pPresentIds[i] : 0;
+        context->notify_present(swapchain, present_id);
+    }
 
     return VK_SUCCESS;
 }
@@ -644,6 +617,17 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
 
     vtable.GetPhysicalDeviceFeatures2(physical_device, pFeatures);
 
+    // We're going to use this feature for both VK_AMD_anti_lag and
+    // VK_NV_low_latency2. It simplifies things a bit if we share a code path
+    // for now. TODO remove it in the future for VK_AMD_anti_lag.
+    if (const auto pidf = find_next<VkPhysicalDevicePresentIdFeaturesKHR>(
+            pFeatures,
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR);
+        pidf) {
+
+        pidf->presentId = true;
+    }
+
     // Don't provide AntiLag if we're trying to spoof nvidia.
     // Nvidia uses VkSurfaceCapabilities2KHR to determine if a surface
     // is capable of reflex instead of AMD's physical device switch found here.
@@ -651,11 +635,11 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
         return;
     }
 
-    const auto feature = find_next<VkPhysicalDeviceAntiLagFeaturesAMD>(
-        pFeatures, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD);
+    if (const auto alf = find_next<VkPhysicalDeviceAntiLagFeaturesAMD>(
+            pFeatures, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD);
+        alf) {
 
-    if (feature) {
-        feature->antiLag = context->supports_required_extensions;
+        alf->antiLag = context->supports_required_extensions;
     }
 }
 
@@ -707,12 +691,11 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
     const auto lsc = find_next<VkLatencySurfaceCapabilitiesNV>(
         pSurfaceCapabilities,
         VK_STRUCTURE_TYPE_LATENCY_SURFACE_CAPABILITIES_NV);
-
     if (!lsc) {
         return;
     }
 
-    // I kind of eyeballed these!
+    // I eyeballed these - there might be more that we can support.
     const auto supported_modes = std::vector<VkPresentModeKHR>{
         VK_PRESENT_MODE_IMMEDIATE_KHR,
         VK_PRESENT_MODE_MAILBOX_KHR,
@@ -723,7 +706,7 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
 
     // They're asking how many we want to return.
     if (!lsc->pPresentModes) {
-        lsc->presentModeCount = static_cast<std::uint32_t>(num_supported_modes);
+        lsc->presentModeCount = num_supported_modes;
         return;
     }
 
@@ -750,19 +733,17 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
         return result;
     }
 
-    auto addition = DeviceContext::SwapchainInfo{
-        .present_delay = std::chrono::milliseconds{0},
-        .was_low_latency_requested = false,
-    };
-
+    // VK_NV_low_latency2 allows a swapchain to be created with the low latency
+    // mode already on via VkSwapchainLatencyCreateInfoNV.
+    auto was_low_latency_requested = false;
     if (const auto slci = find_next<VkSwapchainLatencyCreateInfoNV>(
             pCreateInfo, VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV);
         slci) {
-        
-        addition.was_low_latency_requested = slci->latencyModeEnable;
-    }
 
-    assert(context->swapchain_infos.try_emplace(*pSwapchain, addition).second);
+        was_low_latency_requested = slci->latencyModeEnable;
+    }
+    context->swapchain_monitors.try_emplace(*pSwapchain, *context,
+                                            was_low_latency_requested);
 
     return VK_SUCCESS;
 }
@@ -772,7 +753,7 @@ DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
                     const VkAllocationCallbacks* pAllocator) {
     const auto context = layer_context.get_context(device);
 
-    assert(context->swapchain_infos.erase(swapchain));
+    assert(context->swapchain_monitors.erase(swapchain));
 
     context->vtable.DestroySwapchainKHR(device, swapchain, pAllocator);
 }
@@ -788,20 +769,20 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     // NVIDIA's method and then have a working AL2 implementation follow using
     // that existing code path.
 
-    const auto present_delay = [&]() { // lambda abuse?
+    const auto present_delay = [&]() {
         using namespace std::chrono;
         return duration_cast<milliseconds>(1s / pData->maxFPS);
     }();
 
-    context->update_swapchain_infos(std::nullopt, present_delay,
-                                    (pData->mode == VK_ANTI_LAG_MODE_ON_AMD));
+    context->update_params(std::nullopt, present_delay,
+                           (pData->mode == VK_ANTI_LAG_MODE_ON_AMD));
 
     if (!pData->pPresentationInfo) {
         return;
     }
 
     if (pData->pPresentationInfo->stage == VK_ANTI_LAG_STAGE_INPUT_AMD) {
-        context->sleep_in_input();
+        // TODO use nvidia's path
     }
 }
 
@@ -811,16 +792,25 @@ VkResult LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain,
     const auto context = layer_context.get_context(device);
     assert(pSleepInfo);
 
-    // TODO sleep here
+    // We're associating an application-provided timeline semaphore + value with
+    // a swapchain that says 'signal me when we should move past input'.
+    auto& swapchain_monitor = [&]() -> auto& {
+        const auto iter = context->swapchain_monitors.find(swapchain);
+        assert(iter != std::end(context->swapchain_monitors));
+        return iter->second;
+    }();
+
+    // Tell our swapchain monitor that if they want us to proceed they should
+    // signal this semaphore.
+    swapchain_monitor.notify_semaphore(pSleepInfo->signalSemaphore,
+                                       pSleepInfo->value);
 
     return VK_SUCCESS;
 }
 
 void QueueNotifyOutOfBandNV(VkQueue queue,
                             const VkOutOfBandQueueTypeInfoNV* pQueueTypeInfo) {
-    // This is really thoughtful from NVIDIA. Having the application explicitly
-    // state which queues should be ignored for latency evaluation is far
-    // superior to AMD's guessing game.
+
     // Kind of interesting how you can't turn it back on once it's turned off.
     // Also I really have no idea why pQueueTypeInfo's VkOutOfBandQueueTypeNV
     // enum even exists (I guess we will find out later when nothing works).
@@ -834,14 +824,13 @@ VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
     const auto context = layer_context.get_context(device);
 
     if (pSleepModeInfo) {
-        context->update_swapchain_infos(
+        context->update_params(
             swapchain,
             std::chrono::milliseconds{pSleepModeInfo->minimumIntervalUs},
             pSleepModeInfo->lowLatencyMode);
     } else {
         // If pSleepModeInfo is nullptr, it means no delay and no low latency.
-        context->update_swapchain_infos(swapchain, std::chrono::milliseconds{0},
-                                        false);
+        context->update_params(swapchain, std::chrono::milliseconds{0}, false);
     }
     return VK_SUCCESS;
 }
