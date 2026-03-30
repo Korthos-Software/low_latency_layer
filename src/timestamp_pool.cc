@@ -3,6 +3,7 @@
 #include "helper.hh"
 #include "queue_context.hh"
 
+#include <functional>
 #include <mutex>
 #include <ranges>
 #include <span>
@@ -36,8 +37,8 @@ TimestampPool::QueryChunk::QueryChunk(const QueueContext& queue_context)
       command_buffers(std::make_unique<CommandBuffersOwner>(queue_context)) {
 
     this->free_indices = []() {
-        constexpr auto KEYS = std::views::iota(0u, QueryChunk::CHUNK_SIZE);
-        return std::make_unique<free_indices_t>(std::from_range, KEYS);
+        constexpr auto keys = std::views::iota(0u, QueryChunk::CHUNK_SIZE);
+        return std::unordered_set<std::uint64_t>(std::from_range, keys);
     }();
 }
 
@@ -76,56 +77,80 @@ VkCommandBuffer TimestampPool::QueryChunk::CommandBuffersOwner::operator[](
 TimestampPool::QueryChunk::~QueryChunk() {}
 
 TimestampPool::TimestampPool(QueueContext& queue_context)
-    : queue_context(queue_context) {
-
-    // Allocate one block on construction, it's likely more than enough.
-    auto query_chunk = std::make_shared<QueryChunk>(this->queue_context);
-    this->query_chunks.emplace(std::move(query_chunk));
-}
+    : queue_context(queue_context),
+      reaper_worker(std::bind_front(&TimestampPool::do_reaper, this)) {}
 
 std::shared_ptr<TimestampPool::Handle> TimestampPool::acquire() {
     const auto lock = std::scoped_lock{this->mutex};
 
     // Gets the empty one, or inserts a new one and returns it.
-    const auto not_empty_iter = [this]() -> auto {
+    auto& query_chunk = [this]() -> auto& {
         const auto not_empty_iter =
             std::ranges::find_if(this->query_chunks, [](const auto& qc) {
                 assert(qc);
-                return std::size(*qc->free_indices);
+                return std::size(qc->free_indices);
             });
 
         if (not_empty_iter != std::end(this->query_chunks)) {
-            return not_empty_iter;
+            return **not_empty_iter;
         }
 
-        const auto insert = std::make_shared<QueryChunk>(this->queue_context);
-        const auto [iter, did_insert] = this->query_chunks.emplace(insert);
+        const auto [iter, did_insert] = this->query_chunks.emplace(
+            std::make_unique<QueryChunk>(this->queue_context));
         assert(did_insert);
-        return iter;
+        return **iter;
     }();
 
-    // Grab any element from our set and erase it immediately after.
-    auto& indices = *(*not_empty_iter)->free_indices;
-    const auto query_index = *std::begin(indices);
-    indices.erase(query_index);
+    // Pull any element from our set to use as our query_index here.
+    const auto query_index = *std::begin(query_chunk.free_indices);
+    query_chunk.free_indices.erase(query_index);
 
-    return std::make_shared<Handle>(*this, *not_empty_iter, query_index);
+    // Custom deleter function that puts the handle on our async deleter queue.
+    const auto reaper_deleter = [this](Handle* const handle) {
+        if (!handle) {
+            return;
+        }
+
+        const auto lock = std::scoped_lock{this->mutex};
+        this->expiring_handles.push_back(handle);
+        this->cv.notify_one();
+    };
+
+    return std::shared_ptr<Handle>(new Handle(*this, query_chunk, query_index),
+                                   reaper_deleter);
 }
 
 TimestampPool::Handle::Handle(TimestampPool& timestamp_pool,
-                              const std::shared_ptr<QueryChunk>& origin_chunk,
+                              QueryChunk& query_chunk,
                               const std::uint64_t& query_index)
-    : timestamp_pool(timestamp_pool), origin_chunk(origin_chunk),
-      query_pool(*origin_chunk->query_pool), query_index(query_index),
-      command_buffer((*origin_chunk->command_buffers)[query_index]) {}
+    : timestamp_pool(timestamp_pool), query_chunk(query_chunk),
+      query_pool(*query_chunk.query_pool), query_index(query_index),
+      command_buffer((*query_chunk.command_buffers)[query_index]) {}
 
-TimestampPool::Handle::~Handle() {
-    const auto lock = std::scoped_lock{this->timestamp_pool.mutex};
+TimestampPool::Handle::~Handle() {}
 
-    // Parent destructing shouldn't mean we should have a bunch of
-    // insertions for zero reason.
-    if (const auto ptr = this->origin_chunk.lock(); ptr) {
-        ptr->free_indices->insert(this->query_index);
+void TimestampPool::do_reaper(const std::stop_token stoken) {
+    for (;;) {
+        auto lock = std::unique_lock{this->mutex};
+        this->cv.wait(lock, stoken,
+                      [&]() { return !this->expiring_handles.empty(); });
+
+        // Keep going and free everything before destructing.
+        if (stoken.stop_requested() && this->expiring_handles.empty()) {
+            break;
+        }
+
+        const auto handle_ptr = this->expiring_handles.front();
+        this->expiring_handles.pop_front();
+
+        // Allow more to go on the queue while we wait for it to finish.
+        lock.unlock();
+        handle_ptr->await_time();
+
+        // Lock our mutex, allow the queue to use it again and delete it.
+        lock.lock();
+        handle_ptr->query_chunk.free_indices.insert(handle_ptr->query_index);
+        delete handle_ptr;
     }
 }
 
@@ -175,7 +200,7 @@ std::optional<DeviceClock::time_point_t> TimestampPool::Handle::get_time() {
     auto query_result = QueryResult{};
 
     const auto result = vtable.GetQueryPoolResults(
-        context.device, query_pool,
+        context.device, this->query_pool,
         static_cast<std::uint32_t>(this->query_index), 1, sizeof(query_result),
         &query_result, sizeof(query_result),
         VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
@@ -202,7 +227,7 @@ DeviceClock::time_point_t TimestampPool::Handle::await_time() {
     auto query_result = QueryResult{};
 
     THROW_NOT_VKSUCCESS(vtable.GetQueryPoolResults(
-        context.device, query_pool,
+        context.device, this->query_pool,
         static_cast<std::uint32_t>(this->query_index), 1, sizeof(query_result),
         &query_result, sizeof(query_result),
         VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT |
@@ -210,12 +235,6 @@ DeviceClock::time_point_t TimestampPool::Handle::await_time() {
     assert(query_result.available);
 
     return context.clock->ticks_to_time(query_result.value);
-}
-
-DeviceClock::time_point_t TimestampPool::Handle::get_time_required() {
-    const auto time = this->get_time();
-    assert(time.has_value());
-    return *time;
 }
 
 TimestampPool::~TimestampPool() {}

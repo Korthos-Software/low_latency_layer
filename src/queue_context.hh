@@ -20,6 +20,7 @@ class QueueContext final : public Context {
     // we give up tracking them. This is neccessary for queues which do not
     // present anything.
     static constexpr auto MAX_TRACKED_SUBMISSIONS = 50u;
+    static constexpr auto MAX_TRACKED_PRESENT_IDS = 50u;
 
   public:
     DeviceContext& device;
@@ -78,6 +79,13 @@ class QueueContext final : public Context {
         std::shared_ptr<std::deque<std::unique_ptr<Submission>>>;
     using present_id_t = std::uint64_t;
     std::unordered_map<present_id_t, submissions_t> unpresented_submissions;
+
+    // We might be tracking present_ids which aren't presented to - and as a
+    // result we don't ever clear those Submissions. So manually evict them by
+    // removing the n'th oldest. This is elegant because even if our
+    // SwapchainMonitor has these stored (unlikely) they won't be destructed as
+    // it just decrements their std::shared_ptr use count.
+    std::deque<present_id_t> present_id_ring;
 
   public:
     QueueContext(DeviceContext& device_context, const VkQueue& queue,

@@ -95,6 +95,10 @@ void SwapchainMonitor::notify_present(
 
     const auto lock = std::scoped_lock{this->mutex};
 
+    if (!this->was_low_latency_requested) {
+        return;
+    }
+
     // Fast path where this work has already completed.
     if (!this->wakeup_semaphores.empty() && !submissions->empty()) {
 

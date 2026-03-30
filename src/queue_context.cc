@@ -59,6 +59,10 @@ void QueueContext::notify_submit(
     if (submissions == nullptr) {
         submissions =
             std::make_shared<std::deque<std::unique_ptr<Submission>>>();
+
+        if (present_id) {
+            this->present_id_ring.emplace_back(present_id);
+        }
     }
 
     submissions->push_back(
@@ -66,11 +70,16 @@ void QueueContext::notify_submit(
                                                 .tail_handle = tail_handle,
                                                 .cpu_present_time = now}));
 
-    // This is probably hit if our queue never actually presents to anything,
-    // because the only time we manually evict our unpresent_submissions is
-    // when we present to something.
+    // This is probably hit if our queue never actually presents to anything.
     if (std::size(*submissions) > this->MAX_TRACKED_SUBMISSIONS) {
         submissions->pop_front();
+    }
+
+    if (std::size(this->present_id_ring) > MAX_TRACKED_PRESENT_IDS) {
+        const auto evicted_present_id = this->present_id_ring.front();
+        this->present_id_ring.pop_front();
+
+        this->unpresented_submissions.erase(evicted_present_id);
     }
 }
 

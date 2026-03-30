@@ -31,9 +31,9 @@ class DeviceContext final : public Context {
     const VkDevice device;
     const VkuDeviceDispatchTable vtable;
 
-    std::unordered_map<VkQueue, std::shared_ptr<QueueContext>> queues;
-
     std::unique_ptr<DeviceClock> clock;
+
+    std::unordered_map<VkQueue, std::shared_ptr<QueueContext>> queues;
 
     std::unordered_map<VkSwapchainKHR, SwapchainMonitor> swapchain_monitors;
 
