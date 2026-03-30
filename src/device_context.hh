@@ -24,7 +24,8 @@ class DeviceContext final : public Context {
     InstanceContext& instance;
     PhysicalDeviceContext& physical_device;
 
-    // Whether or not we were asked to do NV_VK_LowLatency2 or VK_AMD_anti_lag.
+    // Whether or not we were asked to do NV_VK_LowLatency2 or VK_AMD_anti_lag
+    // at the device level.
     const bool was_capability_requested;
 
     const VkDevice device;
@@ -39,13 +40,13 @@ class DeviceContext final : public Context {
   public:
     DeviceContext(InstanceContext& parent_instance,
                   PhysicalDeviceContext& parent_physical,
-                  const VkDevice& device, const bool was_antilag_requested,
+                  const VkDevice& device, const bool was_capability_requested,
                   VkuDeviceDispatchTable&& vtable);
     virtual ~DeviceContext();
 
   public:
-    // Updates the settings associated with that swapchain. If none is provided
-    // all swapchains are set to this value.
+    // Updates the settings associated with that swapchain. If no swapchain
+    // target is provided all swapchains are set to this value.
     void update_params(const std::optional<VkSwapchainKHR> target,
                        const std::chrono::milliseconds& present_delay,
                        const bool was_low_latency_requested);

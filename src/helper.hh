@@ -8,6 +8,11 @@
 
 namespace low_latency {
 
+#define THROW_NOT_VKSUCCESS(x)                                                 \
+    if (const auto result = x; result != VK_SUCCESS) {                         \
+        throw result;                                                          \
+    }
+
 // Small templates which allow us to SFINAE find pNext structs.
 template <typename T>
 static T* find_next(void* const head, const VkStructureType& stype) {

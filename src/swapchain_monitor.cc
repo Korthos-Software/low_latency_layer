@@ -1,5 +1,6 @@
 #include "swapchain_monitor.hh"
 #include "device_context.hh"
+#include "helper.hh"
 
 #include <vulkan/vulkan_core.h>
 
@@ -23,7 +24,7 @@ void SwapchainMonitor::WakeupSemaphore::signal(
         VkSemaphoreSignalInfo{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
                               .semaphore = this->timeline_semaphore,
                               .value = this->value};
-    THROW_NON_VKSUCCESS(device.vtable.SignalSemaphore(device.device, &ssi));
+    THROW_NOT_VKSUCCESS(device.vtable.SignalSemaphore(device.device, &ssi));
 }
 
 void SwapchainMonitor::do_swapchain_monitor(const std::stop_token stoken) {
@@ -107,6 +108,21 @@ void SwapchainMonitor::notify_present(
 
     this->in_flight_submissions.emplace_back(submissions);
     this->cv.notify_one();
+}
+
+void SwapchainMonitor::wait_until() {
+    // No reason to lock when using VK_AMD_anti_lag.
+    if (this->in_flight_submissions.empty()) {
+        return;
+    }
+
+    const auto last_submissions = this->in_flight_submissions.back();
+    this->in_flight_submissions.clear();
+    if (last_submissions->empty()) {
+        return;
+    }
+
+    last_submissions->back()->tail_handle->await_time();
 }
 
 } // namespace low_latency

@@ -78,8 +78,6 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceQueueFamilyProperties2);
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceFeatures2);
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceSurfaceCapabilities2KHR);
-    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceProperties2);
-    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceProperties2KHR);
 #undef INSTANCE_VTABLE_LOAD
 
     const auto lock = std::scoped_lock{layer_context.mutex};
@@ -102,11 +100,13 @@ DestroyInstance(VkInstance instance, const VkAllocationCallbacks* allocator) {
         // Erase our physical devices owned by this instance from the global
         // context.
         for (const auto& [key, _] : context->phys_devices) {
-            assert(layer_context.contexts.erase(key));
+            assert(layer_context.contexts.contains(key));
+            layer_context.contexts.erase(key);
         }
 
         const auto key = layer_context.get_key(instance);
-        assert(layer_context.contexts.erase(key));
+        assert(layer_context.contexts.contains(key));
+        layer_context.contexts.erase(key);
 
         // Should be the last ptr now like DestroyDevice.
         assert(context.unique());
@@ -154,23 +154,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     const auto requested = std::unordered_set<std::string_view>(
         std::from_range, enabled_extensions);
 
-    // There's the antilag extension that might be requested here - Antilag2.
-    // Then there's the other thing we provide, which is our AntiLag1
-    // equivalent. Calling them AL1 and AL2, where AL1 is requested via
-    // an env var and AL2 is requested at the device level via the extension,
-    // the cases where we exit with a bad code or deliberately no-op are:
-    //
-    //     !SUPPORTED && !AL2 &&  AL1          -> No-op hooks
-    //                   !AL2 && !AL1          -> No-op hooks.
-    //     !SUPPORTED &&  AL2                  -> VK_ERROR_INITIALIZATION_FAILED
-    //
-    // Note that even though the user has explicitly enabled AL1 via an env var,
-    // failing hard here by returning INIT_FAILED if the device doesn't support
-    // it is wrong. The vulkan application could just be creating a device that
-    // cannot support it which is unrelated to anything present related. This
-    // is not the case with AL2, because the vulkan application has to
-    // explicitly ask for the extension when it creates the device.
-
     const auto was_capability_requested =
         requested.contains(VK_AMD_ANTI_LAG_EXTENSION_NAME) ||
         requested.contains(VK_NV_LOW_LATENCY_2_EXTENSION_NAME);
@@ -204,11 +187,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
 
         // Only append the extra extension if it wasn't already asked for.
         for (const auto& wanted : PhysicalDeviceContext::required_extensions) {
-            if (requested.contains(wanted)) {
-                continue;
+            if (!requested.contains(wanted)) {
+                next_extensions.push_back(wanted);
             }
-
-            next_extensions.push_back(wanted);
         }
 
         return next_extensions;
@@ -284,14 +265,16 @@ DestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator) {
         // Remove all owned queues from our global context pool.
         for (const auto& [queue, _] : device_context->queues) {
             const auto key = layer_context.get_key(queue);
-            assert(layer_context.contexts.erase(key));
+            assert(layer_context.contexts.contains(key));
+            layer_context.contexts.erase(key);
         }
 
         const auto key = layer_context.get_key(device);
-        assert(layer_context.contexts.erase(key));
+        assert(layer_context.contexts.contains(key));
+        layer_context.contexts.erase(key);
 
-        // should be the last shared ptr now, so its destructor can be called.
-        // the destructor should expect its owned queues to be unique as well!
+        // Should be the last shared ptr now, so its destructor can be called.
+        // The destructor should expect its owned queues to be unique as well.
         assert(device_context.unique());
 
         return func;
@@ -361,7 +344,7 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
               const VkSubmitInfo* submit_infos, VkFence fence) {
 
     const auto context = layer_context.get_context(queue);
-    const auto& vtable = context->device_context.vtable;
+    const auto& vtable = context->device.vtable;
 
     if (!submit_count || !context->should_inject_timestamps()) {
         return vtable.QueueSubmit(queue, submit_count, submit_infos, fence);
@@ -447,7 +430,7 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
                const VkSubmitInfo2* submit_infos, VkFence fence) {
 
     const auto context = layer_context.get_context(queue);
-    const auto& vtable = context->device_context.vtable;
+    const auto& vtable = context->device.vtable;
 
     if (!submit_count || !context->should_inject_timestamps()) {
         return vtable.QueueSubmit2(queue, submit_count, submit_infos, fence);
@@ -511,7 +494,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL
 vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
 
     const auto context = layer_context.get_context(queue);
-    const auto& vtable = context->device_context.vtable;
+    const auto& vtable = context->device.vtable;
 
     if (const auto res = vtable.QueuePresentKHR(queue, present_info);
         res != VK_SUCCESS) {
@@ -524,7 +507,11 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
 
     for (auto i = std::uint32_t{0}; i < present_info->swapchainCount; ++i) {
         const auto& swapchain = present_info->pSwapchains[i];
+
+        // For VK_AMD_anti_lag, providing a pPresentId isn't part of the spec.
+        // So we just set it to 0 if it isn't provided.
         const auto present_id = pid ? pid->pPresentIds[i] : 0;
+
         context->notify_present(swapchain, present_id);
     }
 
@@ -549,9 +536,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
             physical_device, pLayerName, pPropertyCount, pProperties);
     }
 
-    // If we're spoofing nvidia we want to provide their extension instead.
+    // If we're exposing reflex we want to provide their extension instead.
     const auto extension_properties = [&]() -> VkExtensionProperties {
-        if (context->instance.layer.should_spoof_nvidia) {
+        if (context->instance.layer.should_expose_reflex) {
             return {.extensionName = VK_NV_LOW_LATENCY_2_EXTENSION_NAME,
                     .specVersion = VK_NV_LOW_LATENCY_2_SPEC_VERSION};
         }
@@ -561,13 +548,12 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
 
     if (pLayerName) {
         // This query is for our layer specifically.
-
-        if (!pProperties) { // Querying how much space they need.
+        if (!pProperties) {
             *pPropertyCount = 1;
             return VK_SUCCESS;
         }
 
-        if (!*pPropertyCount) { // They gave us zero space to work with.
+        if (!*pPropertyCount) {
             return VK_INCOMPLETE;
         }
 
@@ -618,8 +604,7 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
     vtable.GetPhysicalDeviceFeatures2(physical_device, pFeatures);
 
     // We're going to use this feature for both VK_AMD_anti_lag and
-    // VK_NV_low_latency2. It simplifies things a bit if we share a code path
-    // for now. TODO remove it in the future for VK_AMD_anti_lag.
+    // VK_NV_low_latency2. It simplifies things a bit if we share a code path.
     if (const auto pidf = find_next<VkPhysicalDevicePresentIdFeaturesKHR>(
             pFeatures,
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR);
@@ -628,10 +613,10 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
         pidf->presentId = true;
     }
 
-    // Don't provide AntiLag if we're trying to spoof nvidia.
-    // Nvidia uses VkSurfaceCapabilities2KHR to determine if a surface
-    // is capable of reflex instead of AMD's physical device switch found here.
-    if (context->instance.layer.should_spoof_nvidia) {
+    // Don't provide AntiLag if we're exposing reflex - VK_NV_low_latency2 uses
+    // VkSurfaceCapabilities2KHR to determine if a surface is capable of reflex
+    // instead of AMD's physical device switch found here.
+    if (context->instance.layer.should_expose_reflex) {
         return;
     }
 
@@ -649,29 +634,6 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2KHR(
     return GetPhysicalDeviceFeatures2(physical_device, pFeatures);
 }
 
-static VKAPI_ATTR void VKAPI_CALL
-GetPhysicalDeviceProperties2(VkPhysicalDevice physical_device,
-                             VkPhysicalDeviceProperties2* pProperties) {
-
-    const auto context = layer_context.get_context(physical_device);
-    const auto& vtable = context->instance.vtable;
-
-    vtable.GetPhysicalDeviceProperties2(physical_device, pProperties);
-
-    constexpr auto NVIDIA_VENDOR_ID = 0x10DE;
-    constexpr auto NVIDIA_DEVICE_ID = 0x2684; // rtx 4080 i think?
-    if (context->instance.layer.should_spoof_nvidia) {
-        pProperties->properties.vendorID = NVIDIA_VENDOR_ID;
-        pProperties->properties.deviceID = NVIDIA_DEVICE_ID;
-    }
-}
-
-static VKAPI_ATTR void VKAPI_CALL
-GetPhysicalDeviceProperties2KHR(VkPhysicalDevice physical_device,
-                                VkPhysicalDeviceProperties2* pProperties) {
-    return GetPhysicalDeviceProperties2(physical_device, pProperties);
-}
-
 static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
     VkPhysicalDevice physical_device,
     const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
@@ -684,7 +646,7 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
         physical_device, pSurfaceInfo, pSurfaceCapabilities);
 
     // Don't do this unless we're spoofing nvidia.
-    if (!context->instance.layer.should_spoof_nvidia) {
+    if (!context->instance.layer.should_expose_reflex) {
         return;
     }
 
@@ -742,8 +704,10 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
 
         was_low_latency_requested = slci->latencyModeEnable;
     }
-    context->swapchain_monitors.try_emplace(*pSwapchain, *context,
-                                            was_low_latency_requested);
+
+    const auto [_, did_emplace] = context->swapchain_monitors.try_emplace(
+        *pSwapchain, *context, was_low_latency_requested);
+    assert(did_emplace);
 
     return VK_SUCCESS;
 }
@@ -753,7 +717,8 @@ DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
                     const VkAllocationCallbacks* pAllocator) {
     const auto context = layer_context.get_context(device);
 
-    assert(context->swapchain_monitors.erase(swapchain));
+    assert(context->swapchain_monitors.contains(swapchain));
+    context->swapchain_monitors.erase(swapchain);
 
     context->vtable.DestroySwapchainKHR(device, swapchain, pAllocator);
 }
@@ -765,9 +730,8 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
 
     // AL2 is a synchronous while NVIDIA's low_latencty2 is asynchronous.
     // It's difficult to model an asynchronous impl inside a synchronous impl,
-    // but it's easy to do the inverse. As a result, we should implement
-    // NVIDIA's method and then have a working AL2 implementation follow using
-    // that existing code path.
+    // but it's easy to do the inverse. AMD's extension piggybacks on NVIDIA's
+    // more complicated implementation.
 
     const auto present_delay = [&]() {
         using namespace std::chrono;
@@ -777,12 +741,18 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     context->update_params(std::nullopt, present_delay,
                            (pData->mode == VK_ANTI_LAG_MODE_ON_AMD));
 
-    if (!pData->pPresentationInfo) {
+    if (!pData->pPresentationInfo ||
+        pData->pPresentationInfo->stage != VK_ANTI_LAG_STAGE_INPUT_AMD) {
+
         return;
     }
 
-    if (pData->pPresentationInfo->stage == VK_ANTI_LAG_STAGE_INPUT_AMD) {
-        // TODO use nvidia's path
+    // VK_AMD_anti_lag doesn't provide a swapchain, so we can't map it to
+    // a queue. Our previous implementation used the last queue that presented
+    // and made sure that at least that one completed. I think it's more robust
+    // to make sure they all complete.
+    for (auto& iter : context->swapchain_monitors) {
+        iter.second.wait_until();
     }
 }
 
@@ -832,21 +802,18 @@ VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
         // If pSleepModeInfo is nullptr, it means no delay and no low latency.
         context->update_params(swapchain, std::chrono::milliseconds{0}, false);
     }
+
     return VK_SUCCESS;
 }
 
 void SetLatencyMarkerNV(VkDevice device, VkSwapchainKHR swapchain,
                         const VkSetLatencyMarkerInfoNV* pLatencyMarkerInfo) {
     // STUB
-    // We will probably end up making use of this in the future, but afaict it's
-    // not relevant for this layer's operation just yet. This function is
-    // NVIDIA's way of giving developers insight into their render pipeline.
 }
 
 void GetLatencyTimingsNV(VkDevice device, VkSwapchainKHR swapchain,
                          VkGetLatencyMarkerInfoNV* pLatencyMarkerInfo) {
     // STUB
-    // Just like SetLatencyMarkerNV this isn't relevant for us just yet.
 }
 
 } // namespace low_latency
@@ -907,11 +874,6 @@ static const auto instance_functions = func_map_t{
 
     HOOK_ENTRY("vkGetPhysicalDeviceSurfaceCapabilities2KHR",
                low_latency::GetPhysicalDeviceSurfaceCapabilities2KHR),
-
-    HOOK_ENTRY("vkGetPhysicalDeviceProperties2",
-               low_latency::GetPhysicalDeviceProperties2),
-    HOOK_ENTRY("vkGetPhysicalDeviceProperties2KHR",
-               low_latency::GetPhysicalDeviceProperties2KHR),
 };
 
 static const auto device_functions = func_map_t{

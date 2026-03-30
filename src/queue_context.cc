@@ -1,44 +1,43 @@
 #include "queue_context.hh"
 #include "device_context.hh"
-#include "layer_context.hh"
+#include "helper.hh"
 #include "timestamp_pool.hh"
 
 #include <span>
+
 #include <vulkan/vulkan_core.h>
 
 namespace low_latency {
 
-QueueContext::CommandPoolOwner::CommandPoolOwner(
-    const QueueContext& queue_context)
-    : queue_context(queue_context) {
+QueueContext::CommandPoolOwner::CommandPoolOwner(const QueueContext& queue)
+    : queue(queue) {
 
-    const auto& device_context = this->queue_context.device_context;
+    const auto& device_context = this->queue.device;
 
     const auto cpci = VkCommandPoolCreateInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
                  VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = queue_context.queue_family_index,
+        .queueFamilyIndex = queue.queue_family_index,
     };
 
-    THROW_NON_VKSUCCESS(device_context.vtable.CreateCommandPool(
+    THROW_NOT_VKSUCCESS(device_context.vtable.CreateCommandPool(
         device_context.device, &cpci, nullptr, &this->command_pool));
 }
 
 QueueContext::CommandPoolOwner::~CommandPoolOwner() {
-    const auto& device_context = this->queue_context.device_context;
+    const auto& device_context = this->queue.device;
     device_context.vtable.DestroyCommandPool(device_context.device,
                                              this->command_pool, nullptr);
 }
 
-QueueContext::QueueContext(DeviceContext& device_context, const VkQueue& queue,
+QueueContext::QueueContext(DeviceContext& device, const VkQueue& queue,
                            const std::uint32_t& queue_family_index)
-    : device_context(device_context), queue(queue),
-      queue_family_index(queue_family_index),
+    : device(device), queue(queue), queue_family_index(queue_family_index),
       command_pool(std::make_unique<CommandPoolOwner>(*this)) {
 
     // Only construct a timestamp pool if we support it!
-    if (device_context.physical_device.supports_required_extensions) {
+    if (device.physical_device.supports_required_extensions) {
         this->timestamp_pool = std::make_unique<TimestampPool>(*this);
     }
 }
@@ -77,7 +76,6 @@ void QueueContext::notify_submit(
 
 void QueueContext::notify_present(const VkSwapchainKHR& swapchain,
                                   const present_id_t& present_id) {
-
     // Notify the device that this swapchain was just presented to.
     // We're avoiding a double hash here - don't use operator[] and erase.
     auto iter = this->unpresented_submissions.try_emplace(present_id).first;
@@ -86,24 +84,28 @@ void QueueContext::notify_present(const VkSwapchainKHR& swapchain,
             std::make_shared<std::deque<std::unique_ptr<Submission>>>();
     }
 
-    this->device_context.notify_present(swapchain, iter->second);
+    this->device.notify_present(swapchain, iter->second);
 
     // Important, we nuke the submission because now it's presented.
     this->unpresented_submissions.erase(iter);
 }
 
 bool QueueContext::should_inject_timestamps() const {
-    const auto& physical_device = this->device_context.physical_device;
+    const auto& physical_device = this->device.physical_device;
 
+    // Our layer is a no-op here if we don't support it.
     if (!physical_device.supports_required_extensions) {
         return false;
     }
 
     // Don't bother injecting timestamps during queue submission if we
     // aren't planning on doing anything anyway.
-    if (!this->device_context.was_capability_requested &&
-        !physical_device.instance.layer.is_antilag_1_enabled) {
+    if (!this->device.was_capability_requested) {
+        return false;
+    }
 
+    // Don't do it if we've been marked as 'out of band' by nvidia's extension.
+    if (this->should_ignore_latency) {
         return false;
     }
 

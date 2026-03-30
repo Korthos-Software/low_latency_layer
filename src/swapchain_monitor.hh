@@ -62,6 +62,10 @@ class SwapchainMonitor {
                           const std::uint64_t& value);
 
     void notify_present(const QueueContext::submissions_t& submissions);
+
+  public:
+    // Synchronously wait until all in-flight submissions have completed.
+    void wait_until();
 };
 
 } // namespace low_latency

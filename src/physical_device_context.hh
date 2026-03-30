@@ -23,16 +23,12 @@ class PhysicalDeviceContext final : public Context {
 
   public:
     InstanceContext& instance;
-
     const VkPhysicalDevice physical_device;
 
-    std::unique_ptr<const VkPhysicalDeviceProperties> properties;
+    std::unique_ptr<VkPhysicalDeviceProperties> properties;
+    std::unique_ptr<std::vector<VkQueueFamilyProperties2>> queue_properties;
 
-    using queue_properties_t = std::vector<VkQueueFamilyProperties2>;
-    std::unique_ptr<const queue_properties_t> queue_properties;
-
-    // Will be true if the physical device supports everything in
-    // this->required_extensions.
+    // Will be true if the physical device supports all of required_extensions.
     bool supports_required_extensions = false;
 
   public:

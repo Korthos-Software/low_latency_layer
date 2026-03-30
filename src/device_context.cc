@@ -28,40 +28,6 @@ DeviceContext::~DeviceContext() {
     }
 }
 
-/*
-void DeviceContext::sleep_in_input() {
-    // TODO
-
-    // Present hasn't happened yet, we don't know what queue to attack.
-    if (!this->present_queue) {
-        return;
-    }
-
-    const auto& frames = this->present_queue->in_flight_frames;
-    // No frame here means we're behind the GPU and do not need to delay.
-    // If anything we should speed up...
-    if (!std::size(frames)) {
-        return;
-    }
-
-    // If we're here, that means that there might be an outstanding frame that's
-    // sitting on our present_queue which hasn't yet completed, so we need to
-    // stall until it's finished.
-    const auto& last_frame = frames.back();
-    assert(std::size(last_frame.submissions));
-    const auto& last_frame_submission = last_frame.submissions.back();
-    last_frame_submission->end_handle->get_time_spinlock();
-
-    // From our sleep in present implementation, just spinning until
-    // the previous frame has completed did not work well. This was because
-    // there was a delay between presentation and when new work was given
-    // to the GPU. If we stalled the CPU without trying to account for this, we
-    // would get huge frame drops, loss of throughput, and the GPU would even
-    // clock down. So naturally I am concerned about this approach, but it seems
-    // to perform well so far in my own testing and is just beautifully elegant.
-}
-*/
-
 void DeviceContext::update_params(
     const std::optional<VkSwapchainKHR> target,
     const std::chrono::milliseconds& present_delay,

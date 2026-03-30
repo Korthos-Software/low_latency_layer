@@ -1,4 +1,5 @@
 #include "physical_device_context.hh"
+#include "helper.hh"
 
 #include <vulkan/vulkan_core.h>
 
@@ -26,25 +27,24 @@ PhysicalDeviceContext::PhysicalDeviceContext(
         vtable.GetPhysicalDeviceQueueFamilyProperties2(physical_device, &count,
                                                        nullptr);
 
-        using qp_t = PhysicalDeviceContext::queue_properties_t;
-        auto result = qp_t(
+        auto result = std::vector<VkQueueFamilyProperties2>(
             count, VkQueueFamilyProperties2{
                        .sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2});
         vtable.GetPhysicalDeviceQueueFamilyProperties2(physical_device, &count,
                                                        std::data(result));
 
-        return std::make_unique<qp_t>(std::move(result));
+        return std::make_unique<std::vector<VkQueueFamilyProperties2>>(
+            std::move(result));
     }();
 
     this->supports_required_extensions = [&]() {
         auto count = std::uint32_t{};
-        THROW_NON_VKSUCCESS(vtable.EnumerateDeviceExtensionProperties(
+        THROW_NOT_VKSUCCESS(vtable.EnumerateDeviceExtensionProperties(
             physical_device, nullptr, &count, nullptr));
 
         auto supported_extensions = std::vector<VkExtensionProperties>(count);
-        THROW_NON_VKSUCCESS(vtable.EnumerateDeviceExtensionProperties(
-            physical_device, nullptr, &count,
-            std::data(supported_extensions)));
+        THROW_NOT_VKSUCCESS(vtable.EnumerateDeviceExtensionProperties(
+            physical_device, nullptr, &count, std::data(supported_extensions)));
 
         const auto supported =
             supported_extensions |

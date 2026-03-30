@@ -3,7 +3,7 @@
 
 // The purpose of this file is to provide the definition of a 'timestamp pool'.
 // It manages blocks of timestamp query pools, hands them out when requested,
-// and allocates more when (if) we run out.
+// and allocates more when (if) we run out. It _should_ be thread safe.
 // Usage:
 //     1. Get handle with .acquire().
 //     2. Write start/end timestamp operations with the handle's pool and index
@@ -15,6 +15,7 @@
 #include <vulkan/vulkan.hpp>
 
 #include <memory>
+#include <mutex>
 #include <unordered_set>
 #include <vector>
 
@@ -28,6 +29,7 @@ class DeviceContext;
 class TimestampPool final {
   private:
     QueueContext& queue_context;
+    std::mutex mutex;
 
     // A chunk of data which is useful for making timestamp queries.
     // Allows association of an index to a query pool and command buffer.
@@ -72,10 +74,7 @@ class TimestampPool final {
             ~CommandBuffersOwner();
 
           public:
-            VkCommandBuffer operator[](const std::size_t& i) {
-                assert(i < CHUNK_SIZE);
-                return this->command_buffers[i];
-            }
+            VkCommandBuffer operator[](const std::size_t& i);
         };
         std::unique_ptr<CommandBuffersOwner> command_buffers;
 
@@ -98,7 +97,7 @@ class TimestampPool final {
         friend class TimestampPool;
 
       private:
-        const TimestampPool& timestamp_pool;
+        TimestampPool& timestamp_pool;
         const std::weak_ptr<QueryChunk> origin_chunk;
 
       public:
@@ -107,7 +106,7 @@ class TimestampPool final {
         const VkCommandBuffer command_buffer;
 
       public:
-        Handle(const TimestampPool& timestamp_pool,
+        Handle(TimestampPool& timestamp_pool,
                const std::shared_ptr<QueryChunk>& origin_chunk,
                const std::uint64_t& query_index);
         Handle(const Handle& handle) = delete;

@@ -1,5 +1,6 @@
 #include "device_clock.hh"
 #include "device_context.hh"
+#include "helper.hh"
 
 #include <vulkan/vulkan_core.h>
 
@@ -37,7 +38,7 @@ void DeviceClock::calibrate() {
     };
     auto calibrated_result = CalibratedResult{};
 
-    THROW_NON_VKSUCCESS(device.vtable.GetCalibratedTimestampsKHR(
+    THROW_NOT_VKSUCCESS(device.vtable.GetCalibratedTimestampsKHR(
         device.device, 2, std::data(infos), &calibrated_result.device,
         &this->error_bound));
 

@@ -48,22 +48,15 @@ using dispatch_context_t = typename context_for_t<D>::context;
 
 class LayerContext final : public Context {
   private:
-    // If this is not null and set to exactly 1, then we should sleep after
-    // present.
-    static constexpr auto SLEEP_AFTER_PRESENT_ENV =
-        "LOW_LATENCY_LAYER_SLEEP_AFTER_PRESENT";
-
-    // If this is not null and set to exactly 1, then VK_NV_low_latency2
-    // should be provided instead of VK_AMD_anti_lag.
-    static constexpr auto SPOOF_NVIDIA_ENV =
-        "LOW_LATENCY_LAYER_SPOOF_NVIDIA";
+    // If this is not null and set to 1 then VK_NV_low_latency2 should be
+    // provided instead of VK_AMD_anti_lag.
+    static constexpr auto EXPOSE_REFLEX_ENV = "LOW_LATENCY_LAYER_EXPOSE_REFLEX";
 
   public:
     std::mutex mutex;
     std::unordered_map<void*, std::shared_ptr<Context>> contexts;
 
-    bool is_antilag_1_enabled = false;
-    bool should_spoof_nvidia = false;
+    bool should_expose_reflex = false;
 
   public:
     LayerContext();

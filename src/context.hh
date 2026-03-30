@@ -3,11 +3,6 @@
 
 namespace low_latency {
 
-#define THROW_NON_VKSUCCESS(x)                                                 \
-    if (const auto result = x; result != VK_SUCCESS) {                         \
-        throw result;                                                          \
-    }
-
 // A context class doesn't do much by itself. We just use it to provide a
 // virtual destructor so we can store a bunch of shared_ptrs in the same
 // container and rely on RTTI in the layer context. It also deletes the copy and

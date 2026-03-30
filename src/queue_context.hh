@@ -22,18 +22,18 @@ class QueueContext final : public Context {
     static constexpr auto MAX_TRACKED_SUBMISSIONS = 50u;
 
   public:
-    DeviceContext& device_context;
+    DeviceContext& device;
 
     const VkQueue queue;
     const std::uint32_t queue_family_index;
 
     struct CommandPoolOwner final {
       private:
-        const QueueContext& queue_context;
+        const QueueContext& queue;
         VkCommandPool command_pool;
 
       public:
-        CommandPoolOwner(const QueueContext& queue_context);
+        CommandPoolOwner(const QueueContext& queue);
         CommandPoolOwner(const CommandPoolOwner&) = delete;
         CommandPoolOwner(CommandPoolOwner&&) = delete;
         CommandPoolOwner operator=(const CommandPoolOwner&) = delete;
@@ -67,7 +67,7 @@ class QueueContext final : public Context {
     //
     // When our hook sees a VkQueuePresentKHR, we take the provided present_id
     // and notify our device that it needs to watch for when this completes.
-    // We give it our submission. Now, it's out of our hands. We remove the
+    // We give it our submissions. Now, it's out of our hands. We remove the
     // present_id_t mapping when doing so.
     struct Submission {
         std::shared_ptr<TimestampPool::Handle> head_handle, tail_handle;
