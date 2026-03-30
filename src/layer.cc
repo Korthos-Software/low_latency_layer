@@ -155,11 +155,12 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
         std::from_range, enabled_extensions);
 
     const auto was_capability_requested =
-        requested.contains(VK_AMD_ANTI_LAG_EXTENSION_NAME) ||
-        requested.contains(VK_NV_LOW_LATENCY_2_EXTENSION_NAME);
+        requested.contains(!layer_context.should_expose_reflex
+                               ? VK_AMD_ANTI_LAG_EXTENSION_NAME
+                               : VK_NV_LOW_LATENCY_2_EXTENSION_NAME);
 
     const auto context = layer_context.get_context(physical_device);
-    if (!context->supports_required_extensions && was_capability_requested) {
+    if (was_capability_requested && !context->supports_required_extensions) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
 
@@ -180,8 +181,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     const auto next_extensions = [&]() -> std::vector<const char*> {
         auto next_extensions = std::vector(std::from_range, enabled_extensions);
 
-        // Don't append anything extra if we don't support what we need.
-        if (!context->supports_required_extensions) {
+        if (!was_capability_requested) {
             return next_extensions;
         }
 

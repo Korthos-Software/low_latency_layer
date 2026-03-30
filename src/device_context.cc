@@ -14,8 +14,8 @@ DeviceContext::DeviceContext(InstanceContext& parent_instance,
       was_capability_requested(was_capability_requested), device(device),
       vtable(std::move(vtable)) {
 
-    // Only create our clock if we can support creating it.
-    if (this->physical_device.supports_required_extensions) {
+    // Only create our clock if we were asked to do anything.
+    if (this->was_capability_requested) {
         this->clock = std::make_unique<DeviceClock>(*this);
     }
 }
