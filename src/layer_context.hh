@@ -52,11 +52,22 @@ class LayerContext final : public Context {
     // provided instead of VK_AMD_anti_lag.
     static constexpr auto EXPOSE_REFLEX_ENV = "LOW_LATENCY_LAYER_EXPOSE_REFLEX";
 
+    // If this is not null and set to 1 then the card's vendor and id will be
+    // spoofed to appear as a NVIDIA card.
+    static constexpr auto SPOOF_NVIDIA_ENV = "LOW_LATENCY_LAYER_SPOOF_NVIDIA";
+
+  public:
+    // Constants for spoofing.
+    static constexpr auto NVIDIA_VENDOR_ID = 0x10DE;
+    static constexpr auto NVIDIA_DEVICE_ID = 0x2B85; // 5090
+    static constexpr auto NVIDIA_DEVICE_NAME = "NVIDIA GeForce RTX 5090";
+
   public:
     std::mutex mutex;
     std::unordered_map<void*, std::shared_ptr<Context>> contexts;
 
     bool should_expose_reflex = false;
+    bool should_spoof_nvidia = false;
 
   public:
     LayerContext();

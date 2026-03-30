@@ -76,6 +76,7 @@ void QueueContext::notify_submit(
 
 void QueueContext::notify_present(const VkSwapchainKHR& swapchain,
                                   const present_id_t& present_id) {
+
     // Notify the device that this swapchain was just presented to.
     // We're avoiding a double hash here - don't use operator[] and erase.
     auto iter = this->unpresented_submissions.try_emplace(present_id).first;

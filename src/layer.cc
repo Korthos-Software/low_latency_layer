@@ -72,6 +72,8 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     INSTANCE_VTABLE_LOAD(DestroyInstance);
     INSTANCE_VTABLE_LOAD(EnumeratePhysicalDevices);
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceProperties);
+    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceProperties2);
+    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceProperties2KHR);
     INSTANCE_VTABLE_LOAD(GetInstanceProcAddr);
     INSTANCE_VTABLE_LOAD(CreateDevice);
     INSTANCE_VTABLE_LOAD(EnumerateDeviceExtensionProperties);
@@ -634,6 +636,50 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2KHR(
     return GetPhysicalDeviceFeatures2(physical_device, pFeatures);
 }
 
+static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties(
+    VkPhysicalDevice physical_device, VkPhysicalDeviceProperties* pProperties) {
+
+    const auto context = layer_context.get_context(physical_device);
+    const auto& vtable = context->instance.vtable;
+
+    vtable.GetPhysicalDeviceProperties(physical_device, pProperties);
+
+    if (layer_context.should_spoof_nvidia) {
+        pProperties->vendorID = LayerContext::NVIDIA_VENDOR_ID;
+        pProperties->deviceID = LayerContext::NVIDIA_DEVICE_ID;
+
+        // Most games seem happy without doing this, but I don't see why we
+        // shouldn't. I could see an application checking this.
+        std::strncpy(pProperties->deviceName, LayerContext::NVIDIA_DEVICE_NAME,
+                     VK_MAX_PHYSICAL_DEVICE_NAME_SIZE);
+    }
+}
+
+// Identical logic to GetPhysicalDeviceProperties.
+static VKAPI_ATTR void VKAPI_CALL
+GetPhysicalDeviceProperties2(VkPhysicalDevice physical_device,
+                             VkPhysicalDeviceProperties2* pProperties) {
+
+    const auto context = layer_context.get_context(physical_device);
+    const auto& vtable = context->instance.vtable;
+
+    vtable.GetPhysicalDeviceProperties2(physical_device, pProperties);
+
+    if (layer_context.should_spoof_nvidia) {
+        pProperties->properties.vendorID = LayerContext::NVIDIA_VENDOR_ID;
+        pProperties->properties.deviceID = LayerContext::NVIDIA_DEVICE_ID;
+        std::strncpy(pProperties->properties.deviceName,
+                     LayerContext::NVIDIA_DEVICE_NAME,
+                     VK_MAX_PHYSICAL_DEVICE_NAME_SIZE);
+    }
+}
+
+static VKAPI_ATTR void VKAPI_CALL
+GetPhysicalDeviceProperties2KHR(VkPhysicalDevice physical_device,
+                                VkPhysicalDeviceProperties2* pProperties) {
+    return GetPhysicalDeviceProperties2(physical_device, pProperties);
+}
+
 static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
     VkPhysicalDevice physical_device,
     const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
@@ -871,6 +917,13 @@ static const auto instance_functions = func_map_t{
                low_latency::GetPhysicalDeviceFeatures2),
     HOOK_ENTRY("vkGetPhysicalDeviceFeatures2KHR",
                low_latency::GetPhysicalDeviceFeatures2KHR),
+
+    HOOK_ENTRY("vkGetPhysicalDeviceProperties",
+               low_latency::GetPhysicalDeviceProperties),
+    HOOK_ENTRY("vkGetPhysicalDeviceProperties2KHR",
+               low_latency::GetPhysicalDeviceProperties2KHR),
+    HOOK_ENTRY("vkGetPhysicalDeviceProperties2",
+               low_latency::GetPhysicalDeviceProperties2),
 
     HOOK_ENTRY("vkGetPhysicalDeviceSurfaceCapabilities2KHR",
                low_latency::GetPhysicalDeviceSurfaceCapabilities2KHR),

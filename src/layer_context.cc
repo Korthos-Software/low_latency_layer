@@ -12,6 +12,7 @@ LayerContext::LayerContext() {
     };
 
     this->should_expose_reflex = parse_bool_env(EXPOSE_REFLEX_ENV);
+    this->should_spoof_nvidia = parse_bool_env(SPOOF_NVIDIA_ENV);
 }
 
 LayerContext::~LayerContext() {}
