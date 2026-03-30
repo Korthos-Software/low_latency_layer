@@ -51,7 +51,7 @@ class QueueContext final : public Context {
     // NVIDIA's extension lets the application explicitly state that this queue
     // does not contribute to the frame. AMD's extension has no such mechanism -
     // so this will always be false when using VK_AMD_anti_lag.
-    bool should_ignore_latency = false;
+    bool is_out_of_band = false;
 
   public:
     // I want our queue bookkeeping to be fairly simple and do one thing - track

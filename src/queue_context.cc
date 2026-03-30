@@ -115,7 +115,7 @@ bool QueueContext::should_inject_timestamps() const {
     }
 
     // Don't do it if we've been marked as 'out of band' by nvidia's extension.
-    if (this->should_ignore_latency) {
+    if (this->is_out_of_band) {
         return false;
     }
 

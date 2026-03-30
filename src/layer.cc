@@ -743,7 +743,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
 
     // VK_NV_low_latency2 allows a swapchain to be created with the low latency
     // mode already on via VkSwapchainLatencyCreateInfoNV.
-    auto was_low_latency_requested = false;
+    auto was_low_latency_requested = true; // enable by default?
     if (const auto slci = find_next<VkSwapchainLatencyCreateInfoNV>(
             pCreateInfo, VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV);
         slci) {
@@ -832,7 +832,7 @@ void QueueNotifyOutOfBandNV(VkQueue queue,
     // enum even exists (I guess we will find out later when nothing works).
     const auto context = layer_context.get_context(queue);
 
-    context->should_ignore_latency = true;
+    context->is_out_of_band = true;
 }
 
 VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
