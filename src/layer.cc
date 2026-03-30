@@ -396,8 +396,10 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
         [&](const auto& submit) {
             const auto head_handle = context->timestamp_pool->acquire();
+            head_handle->write_command(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
+
             const auto tail_handle = context->timestamp_pool->acquire();
-            head_handle->setup_command_buffers(*tail_handle, *context);
+            tail_handle->write_command(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 
             context->notify_submit(extract_present_id(submit), head_handle,
                                    tail_handle, now);
@@ -449,8 +451,9 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
         [&](const auto& submit) {
             const auto head_handle = context->timestamp_pool->acquire();
+            head_handle->write_command(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
             const auto tail_handle = context->timestamp_pool->acquire();
-            head_handle->setup_command_buffers(*tail_handle, *context);
+            tail_handle->write_command(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 
             context->notify_submit(extract_present_id(submit), head_handle,
                                    tail_handle, now);

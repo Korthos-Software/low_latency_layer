@@ -154,14 +154,14 @@ void TimestampPool::do_reaper(const std::stop_token stoken) {
     }
 }
 
-void TimestampPool::Handle::setup_command_buffers(
-    const Handle& tail, const QueueContext& queue_context) const {
+void TimestampPool::Handle::write_command(
+    const VkPipelineStageFlagBits2& bit) const {
 
     const auto cbbi = VkCommandBufferBeginInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
     };
 
-    const auto& device_context = queue_context.device;
+    const auto& device_context = this->timestamp_pool.queue_context.device;
     const auto& vtable = device_context.vtable;
 
     vtable.ResetQueryPoolEXT(device_context.device, this->query_pool,
@@ -175,18 +175,6 @@ void TimestampPool::Handle::setup_command_buffers(
         this->query_pool, static_cast<std::uint32_t>(this->query_index));
 
     THROW_NOT_VKSUCCESS(vtable.EndCommandBuffer(this->command_buffer));
-
-    vtable.ResetQueryPoolEXT(device_context.device, tail.query_pool,
-                             static_cast<std::uint32_t>(tail.query_index), 1);
-
-    THROW_NOT_VKSUCCESS(vtable.ResetCommandBuffer(tail.command_buffer, 0));
-    THROW_NOT_VKSUCCESS(vtable.BeginCommandBuffer(tail.command_buffer, &cbbi));
-
-    vtable.CmdWriteTimestamp2KHR(
-        tail.command_buffer, VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
-        tail.query_pool, static_cast<std::uint32_t>(tail.query_index));
-
-    THROW_NOT_VKSUCCESS(vtable.EndCommandBuffer(tail.command_buffer));
 }
 
 struct QueryResult {

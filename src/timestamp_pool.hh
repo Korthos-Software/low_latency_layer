@@ -123,8 +123,8 @@ class TimestampPool final {
         ~Handle();
 
       public:
-        void setup_command_buffers(const Handle& tail,
-                                   const QueueContext& queue_context) const;
+        // Performs the Vulkan that sets up this command buffer for submission.
+        void write_command(const VkPipelineStageFlagBits2& bit) const;
 
       public:
         // Attempts to get the time - optional if it's not available yet.
