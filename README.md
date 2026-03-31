@@ -11,7 +11,7 @@ The layer also eliminates a hardware support disparity as considerably more appl
 # Planned
 
 - Respect the provided framerate limit.
-- Cross-platform builds (small amount of time domain work required).
+- Cross-platform builds.
 - Improvements to logging and statistics.
 - HUD with latency information.
 
@@ -43,12 +43,33 @@ Create an out-of-tree build directory (creatively we'll use 'build') and install
 To verify that the installation succeeded you can run this command. If it prints '1' the loader can see the layer and installation was successful.
 
 ```
-    $ ENABLE_LOW_LATENCY_LAYER=1 vulkaninfo 2>/dev/null | grep -q VK_LAYER_NJ3AHXAC_LowLatency && echo 1 || echo 0
+    $ vulkaninfo 2>/dev/null | grep -q VK_LAYER_NJ3AHXAC_LowLatency && echo 1 || echo 0
 ```
 
 # Usage and Configuration
 
-WIP TODO
+By default, the layer exposes the `VK_AMD_anti_lag` device extension. For Linux native applications like *Counter-Strike 2* this works out-of-the-box, allowing you to toggle AMD's Anti-Lag in its menus. You can further customize the layer's behavior using the environment variables listed below.
+
+| Variable | Description |
+| :--- | :--- |
+| `LOW_LATENCY_LAYER_EXPOSE_REFLEX` | Set to `1` to expose `VK_NV_low_latency2` instead of `VK_AMD_anti_lag`. |
+| `LOW_LATENCY_LAYER_SPOOF_NVIDIA` | Set to `1` to report the device as an NVIDIA GPU to the application, regardless of actual hardware. This is necessary for many applications to expose Reflex as an option. It _might_ be beneficial to keep this off when the application allows it. |
+| `DISABLE_LOW_LATENCY_LAYER` | Set to `1` to disable the layer. |
+
+
+For Proton-based applications, you must enable NVAPI support alongside the layer's configuration. Use the `PROTON_FORCE_NVAPI=1` environment variable to force this support regardless of your hardware.
+
+**Steam launch options example:**
+```
+PROTON_FORCE_NVAPI=1 LOW_LATENCY_LAYER_EXPOSE_REFLEX=1 LOW_LATENCY_LAYER_SPOOF_NVIDIA=1 %command%
+```
+
+The 'Boost' mode of Reflex is supported but is functionally identical to 'On' - the layer treats both modes identically.
+
+# Example: Enable NVIDIA spoofing
+LOW_LATENCY_LAYER_SPOOF_NVIDIA=1 ./your-application
+```
+
 
 # Benchmarks 
 
@@ -59,3 +80,4 @@ WIP - not updated for reflex merge
 
 ## The Finals
 ![tf](http://git.nj3.xyz/files/plain/low_latency_layer/tf.png?h=main)
+
