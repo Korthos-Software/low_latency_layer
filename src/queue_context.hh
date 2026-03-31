@@ -99,8 +99,8 @@ class QueueContext final : public Context {
     };
 
     using present_id_t = std::uint64_t;
-    using submissions_ptr_t = std::shared_ptr<Submissions>;
-    std::unordered_map<present_id_t, submissions_ptr_t> unpresented_submissions;
+    std::unordered_map<present_id_t, std::unique_ptr<Submissions>>
+        unpresented_submissions;
 
     // We might be tracking present_ids which aren't presented to - and as a
     // result we don't ever clear those Submissions. So manually evict them by

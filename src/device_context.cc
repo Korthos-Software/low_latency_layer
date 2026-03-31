@@ -37,7 +37,8 @@ void DeviceContext::update_params(
     // swapchains) just write it to everything.
     if (!target.has_value()) {
         for (auto& iter : this->swapchain_monitors) {
-            iter.second->update_params(was_low_latency_requested, present_delay);
+            iter.second->update_params(was_low_latency_requested,
+                                       present_delay);
         }
         return;
     }
@@ -49,12 +50,12 @@ void DeviceContext::update_params(
 
 void DeviceContext::notify_present(
     const VkSwapchainKHR& swapchain,
-    const QueueContext::submissions_ptr_t& submissions) {
+    std::unique_ptr<QueueContext::Submissions> submissions) {
 
     const auto iter = this->swapchain_monitors.find(swapchain);
     assert(iter != std::end(this->swapchain_monitors));
 
-    iter->second->notify_present(submissions);
+    iter->second->notify_present(std::move(submissions));
 }
 
 } // namespace low_latency

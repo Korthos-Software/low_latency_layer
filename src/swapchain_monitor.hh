@@ -8,6 +8,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -31,7 +32,8 @@ class SwapchainMonitor {
     std::chrono::milliseconds present_delay = std::chrono::milliseconds{0};
     bool was_low_latency_requested = false;
 
-    std::deque<QueueContext::submissions_ptr_t> in_flight_submissions;
+    std::deque<std::unique_ptr<QueueContext::Submissions>>
+        in_flight_submissions;
 
   protected:
     // Small fix to avoid submissions growing limitlessly in size if this
@@ -53,7 +55,7 @@ class SwapchainMonitor {
 
   public:
     virtual void
-    notify_present(const QueueContext::submissions_ptr_t& submissions) = 0;
+    notify_present(std::unique_ptr<QueueContext::Submissions> submissions) = 0;
 };
 
 // Provides asynchronous monitoring of submissions and signalling of some
@@ -86,8 +88,8 @@ class ReflexSwapchainMonitor final : public SwapchainMonitor {
                           const std::uint64_t& value);
 
   public:
-    virtual void
-    notify_present(const QueueContext::submissions_ptr_t& submissions) override;
+    virtual void notify_present(
+        std::unique_ptr<QueueContext::Submissions> submissions) override;
 };
 
 // Much simpler synchronous waiting with no thread requirement.
@@ -102,8 +104,8 @@ class AntiLagSwapchainMonitor final : public SwapchainMonitor {
     void await_submissions();
 
   public:
-    virtual void
-    notify_present(const QueueContext::submissions_ptr_t& submissions) override;
+    virtual void notify_present(
+        std::unique_ptr<QueueContext::Submissions> submissions) override;
 };
 
 } // namespace low_latency

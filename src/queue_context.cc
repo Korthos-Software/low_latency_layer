@@ -96,7 +96,7 @@ void QueueContext::notify_submit(
     // mapping (might be empty, but handled with operator[]).
     auto& submissions = this->unpresented_submissions[present_id];
     if (submissions == nullptr) {
-        submissions = std::make_shared<Submissions>();
+        submissions = std::make_unique<Submissions>();
         if (present_id) {
             this->present_id_ring.emplace_back(present_id);
         }
@@ -119,10 +119,10 @@ void QueueContext::notify_present(const VkSwapchainKHR& swapchain,
     // We're avoiding a double hash here - don't use operator[] and erase.
     auto iter = this->unpresented_submissions.try_emplace(present_id).first;
     if (iter->second == nullptr) {
-        iter->second = std::make_shared<Submissions>();
+        iter->second = std::make_unique<Submissions>();
     }
 
-    this->device.notify_present(swapchain, iter->second);
+    this->device.notify_present(swapchain, std::move(iter->second));
 
     // Important, we nuke the submission because now it's presented.
     this->unpresented_submissions.erase(iter);

@@ -67,10 +67,9 @@ void ReflexSwapchainMonitor::do_monitor(const std::stop_token stoken) {
 
         // Look for the latest submission and make sure it's completed.
         if (!this->in_flight_submissions.empty()) {
-            const auto last_submission = this->in_flight_submissions.back();
-            this->in_flight_submissions.clear();
 
-            last_submission->await_completed();
+            this->in_flight_submissions.back()->await_completed();
+            this->in_flight_submissions.clear();
         }
 
         // We might want to signal them all? In theory it's the same timeline
@@ -104,7 +103,7 @@ void ReflexSwapchainMonitor::notify_semaphore(
 }
 
 void ReflexSwapchainMonitor::notify_present(
-    const QueueContext::submissions_ptr_t& submissions) {
+    std::unique_ptr<QueueContext::Submissions> submissions) {
 
     const auto lock = std::scoped_lock{this->mutex};
 
@@ -121,7 +120,7 @@ void ReflexSwapchainMonitor::notify_present(
         return;
     }
 
-    this->in_flight_submissions.emplace_back(submissions);
+    this->in_flight_submissions.emplace_back(std::move(submissions));
     this->prune_submissions();
 
     this->cv.notify_one();
@@ -133,13 +132,13 @@ AntiLagSwapchainMonitor::AntiLagSwapchainMonitor(
 
 AntiLagSwapchainMonitor::~AntiLagSwapchainMonitor() {}
 void AntiLagSwapchainMonitor::notify_present(
-    const QueueContext::submissions_ptr_t& submissions) {
+    std::unique_ptr<QueueContext::Submissions> submissions) {
 
     if (!this->was_low_latency_requested) {
         return;
     }
 
-    this->in_flight_submissions.emplace_back(submissions);
+    this->in_flight_submissions.emplace_back(std::move(submissions));
     this->prune_submissions();
 }
 
@@ -148,10 +147,8 @@ void AntiLagSwapchainMonitor::await_submissions() {
         return;
     }
 
-    const auto last_submission = this->in_flight_submissions.back();
+    this->in_flight_submissions.back()->await_completed();
     this->in_flight_submissions.clear();
-
-    last_submission->await_completed();
 }
 
 } // namespace low_latency

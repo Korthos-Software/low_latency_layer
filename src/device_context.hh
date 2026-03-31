@@ -53,7 +53,7 @@ class DeviceContext final : public Context {
                        const bool was_low_latency_requested);
 
     void notify_present(const VkSwapchainKHR& swapchain,
-                        const QueueContext::submissions_ptr_t& submissions);
+                        std::unique_ptr<QueueContext::Submissions> submissions);
 };
 
 }; // namespace low_latency
