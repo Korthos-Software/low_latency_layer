@@ -21,6 +21,9 @@ class DeviceContext;
 // currently have an option to frame pace, to disable low_latency mode
 // (become a no-op), and must track in_flight_submissions to function.
 class SwapchainMonitor {
+  private:
+    static constexpr auto MAX_TRACKED_IN_FLIGHT_SUBMISSIONS = 50u;
+
   protected:
     const DeviceContext& device;
 
@@ -28,7 +31,12 @@ class SwapchainMonitor {
     std::chrono::milliseconds present_delay = std::chrono::milliseconds{0};
     bool was_low_latency_requested = false;
 
-    std::deque<QueueContext::submissions_t> in_flight_submissions;
+    std::deque<QueueContext::submissions_ptr_t> in_flight_submissions;
+
+  protected:
+    // Small fix to avoid submissions growing limitlessly in size if this
+    // swapchain is never presented to.
+    void prune_submissions();
 
   public:
     SwapchainMonitor(const DeviceContext& device,
@@ -45,7 +53,7 @@ class SwapchainMonitor {
 
   public:
     virtual void
-    notify_present(const QueueContext::submissions_t& submissions) = 0;
+    notify_present(const QueueContext::submissions_ptr_t& submissions) = 0;
 };
 
 // Provides asynchronous monitoring of submissions and signalling of some
@@ -79,7 +87,7 @@ class ReflexSwapchainMonitor final : public SwapchainMonitor {
 
   public:
     virtual void
-    notify_present(const QueueContext::submissions_t& submissions) override;
+    notify_present(const QueueContext::submissions_ptr_t& submissions) override;
 };
 
 // Much simpler synchronous waiting with no thread requirement.
@@ -95,7 +103,7 @@ class AntiLagSwapchainMonitor final : public SwapchainMonitor {
 
   public:
     virtual void
-    notify_present(const QueueContext::submissions_t& submissions) override;
+    notify_present(const QueueContext::submissions_ptr_t& submissions) override;
 };
 
 } // namespace low_latency

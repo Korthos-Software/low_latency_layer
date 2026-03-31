@@ -52,8 +52,8 @@ class LayerContext final : public Context {
     // provided instead of VK_AMD_anti_lag.
     static constexpr auto EXPOSE_REFLEX_ENV = "LOW_LATENCY_LAYER_EXPOSE_REFLEX";
 
-    // If this is not null and set to 1 then the card's vendor and id will be
-    // spoofed to appear as a NVIDIA card.
+    // If this is not null and set to 1 then the card's vendor, id, and device
+    // name will be modified to appear as a NVIDIA card.
     static constexpr auto SPOOF_NVIDIA_ENV = "LOW_LATENCY_LAYER_SPOOF_NVIDIA";
 
   public:

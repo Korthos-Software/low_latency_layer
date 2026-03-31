@@ -23,6 +23,18 @@ void SwapchainMonitor::update_params(
     this->present_delay = present_delay;
 }
 
+void SwapchainMonitor::prune_submissions() {
+    // If our submissions grow too large, we should delete them from our
+    // tracking. It would be nice if this was handled elegantly by some custom
+    // container and we didn't have to call this manually each time we insert.
+    // Also this exact logic is repeated in QueueContext's Submission.
+    if (std::size(this->in_flight_submissions) >
+        this->MAX_TRACKED_IN_FLIGHT_SUBMISSIONS) {
+
+        this->in_flight_submissions.pop_front();
+    }
+}
+
 ReflexSwapchainMonitor::ReflexSwapchainMonitor(
     const DeviceContext& device, const bool was_low_latency_requested)
     : SwapchainMonitor(device, was_low_latency_requested),
@@ -55,12 +67,10 @@ void ReflexSwapchainMonitor::do_monitor(const std::stop_token stoken) {
 
         // Look for the latest submission and make sure it's completed.
         if (!this->in_flight_submissions.empty()) {
-            const auto submission = this->in_flight_submissions.back();
+            const auto last_submission = this->in_flight_submissions.back();
             this->in_flight_submissions.clear();
 
-            if (!submission->empty()) {
-                submission->back()->tail_handle->await_time();
-            }
+            last_submission->await_completed();
         }
 
         // We might want to signal them all? In theory it's the same timeline
@@ -80,7 +90,6 @@ void ReflexSwapchainMonitor::notify_semaphore(
 
     const auto wakeup_semaphore = WakeupSemaphore{
         .timeline_semaphore = timeline_semaphore, .value = value};
-
     // Signal immediately if low_latency isn't requested or if we have no
     // outstanding work.
     if (!this->was_low_latency_requested ||
@@ -95,7 +104,7 @@ void ReflexSwapchainMonitor::notify_semaphore(
 }
 
 void ReflexSwapchainMonitor::notify_present(
-    const QueueContext::submissions_t& submissions) {
+    const QueueContext::submissions_ptr_t& submissions) {
 
     const auto lock = std::scoped_lock{this->mutex};
 
@@ -104,17 +113,17 @@ void ReflexSwapchainMonitor::notify_present(
     }
 
     // Fast path where this work has already completed.
-    if (!this->wakeup_semaphores.empty() && !submissions->empty()) {
-
-        const auto& finished = submissions->back()->tail_handle->get_time();
-        if (finished.has_value()) {
-            this->wakeup_semaphores.back().signal(this->device);
-            this->wakeup_semaphores.clear();
-            return;
-        }
+    // In this case, don't wake up the thread. We can just signal
+    // what we have immediately on this thread.
+    if (!this->wakeup_semaphores.empty() && submissions->has_completed()) {
+        this->wakeup_semaphores.back().signal(this->device);
+        this->wakeup_semaphores.clear();
+        return;
     }
 
     this->in_flight_submissions.emplace_back(submissions);
+    this->prune_submissions();
+
     this->cv.notify_one();
 }
 
@@ -123,15 +132,15 @@ AntiLagSwapchainMonitor::AntiLagSwapchainMonitor(
     : SwapchainMonitor(device, was_low_latency_requested) {}
 
 AntiLagSwapchainMonitor::~AntiLagSwapchainMonitor() {}
-
 void AntiLagSwapchainMonitor::notify_present(
-    const QueueContext::submissions_t& submissions) {
+    const QueueContext::submissions_ptr_t& submissions) {
 
     if (!this->was_low_latency_requested) {
         return;
     }
 
     this->in_flight_submissions.emplace_back(submissions);
+    this->prune_submissions();
 }
 
 void AntiLagSwapchainMonitor::await_submissions() {
@@ -139,13 +148,10 @@ void AntiLagSwapchainMonitor::await_submissions() {
         return;
     }
 
-    const auto last_submissions = this->in_flight_submissions.back();
+    const auto last_submission = this->in_flight_submissions.back();
     this->in_flight_submissions.clear();
-    if (last_submissions->empty()) {
-        return;
-    }
 
-    last_submissions->back()->tail_handle->await_time();
+    last_submission->await_completed();
 }
 
 } // namespace low_latency

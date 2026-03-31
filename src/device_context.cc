@@ -34,7 +34,7 @@ void DeviceContext::update_params(
     const bool was_low_latency_requested) {
 
     // If we don't have a target (AMD's anti_lag doesn't differentiate between
-    // swapchains), just write it to everything.
+    // swapchains) just write it to everything.
     if (!target.has_value()) {
         for (auto& iter : this->swapchain_monitors) {
             iter.second->update_params(was_low_latency_requested, present_delay);
@@ -49,7 +49,7 @@ void DeviceContext::update_params(
 
 void DeviceContext::notify_present(
     const VkSwapchainKHR& swapchain,
-    const QueueContext::submissions_t& submissions) {
+    const QueueContext::submissions_ptr_t& submissions) {
 
     const auto iter = this->swapchain_monitors.find(swapchain);
     assert(iter != std::end(this->swapchain_monitors));

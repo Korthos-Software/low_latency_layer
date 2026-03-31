@@ -16,10 +16,6 @@ namespace low_latency {
 
 class QueueContext final : public Context {
   private:
-    // The amount of queue submissions we allow tracked per queue before
-    // we give up tracking them. This is neccessary for queues which do not
-    // present anything.
-    static constexpr auto MAX_TRACKED_SUBMISSIONS = 50u;
     static constexpr auto MAX_TRACKED_PRESENT_IDS = 50u;
 
   public:
@@ -70,15 +66,41 @@ class QueueContext final : public Context {
     // and notify our device that it needs to watch for when this completes.
     // We give it our submissions. Now, it's out of our hands. We remove the
     // present_id_t mapping when doing so.
-    struct Submission {
-        std::shared_ptr<TimestampPool::Handle> head_handle, tail_handle;
-        DeviceClock::time_point_t cpu_present_time;
+
+    class Submissions final {
+        // The amount of queue submissions we allow tracked per queue before
+        // we give up tracking them. This is neccessary for queues which do not
+        // present anything.
+        static constexpr auto MAX_TRACKED_SUBMISSIONS = 50u;
+
+        struct Submission final {
+            std::shared_ptr<TimestampPool::Handle> head_handle, tail_handle;
+            DeviceClock::time_point_t cpu_present_time;
+        };
+        std::deque<std::unique_ptr<Submission>> submissions;
+
+      public:
+        Submissions();
+        Submissions(const Submissions&) = delete;
+        Submissions(Submissions&&) = delete;
+        Submissions operator=(const Submissions&) = delete;
+        Submissions operator=(Submissions&&) = delete;
+        ~Submissions();
+
+      public:
+        void add_submission(const std::shared_ptr<TimestampPool::Handle> head,
+                            const std::shared_ptr<TimestampPool::Handle> tail,
+                            const DeviceClock::time_point_t& now);
+
+        // Non-blocking - true if this submission has completed on the GPU.
+        bool has_completed() const;
+        // Blocking wait until the last submission has completed.
+        void await_completed() const;
     };
 
-    using submissions_t =
-        std::shared_ptr<std::deque<std::unique_ptr<Submission>>>;
     using present_id_t = std::uint64_t;
-    std::unordered_map<present_id_t, submissions_t> unpresented_submissions;
+    using submissions_ptr_t = std::shared_ptr<Submissions>;
+    std::unordered_map<present_id_t, submissions_ptr_t> unpresented_submissions;
 
     // We might be tracking present_ids which aren't presented to - and as a
     // result we don't ever clear those Submissions. So manually evict them by

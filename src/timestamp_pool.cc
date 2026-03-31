@@ -105,7 +105,7 @@ std::shared_ptr<TimestampPool::Handle> TimestampPool::acquire() {
     const auto query_index = *std::begin(query_chunk.free_indices);
     query_chunk.free_indices.erase(query_index);
 
-    // Custom deleter function that puts the handle on our async deleter queue.
+    // Custom deleter function that puts the handle on our async reaper queue.
     const auto reaper_deleter = [this](Handle* const handle) {
         if (!handle) {
             return;

@@ -756,11 +756,11 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
     }
 
     auto insertion = [&]() -> std::unique_ptr<SwapchainMonitor> {
-        if (!layer_context.should_expose_reflex) {
-            return std::make_unique<AntiLagSwapchainMonitor>(
+        if (layer_context.should_expose_reflex) {
+            return std::make_unique<ReflexSwapchainMonitor>(
                 *context, was_low_latency_requested);
         }
-        return std::make_unique<ReflexSwapchainMonitor>(
+        return std::make_unique<AntiLagSwapchainMonitor>(
             *context, was_low_latency_requested);
     }();
     const auto did_emplace = context->swapchain_monitors
