@@ -35,7 +35,8 @@ class DeviceContext final : public Context {
 
     std::unordered_map<VkQueue, std::shared_ptr<QueueContext>> queues;
 
-    std::unordered_map<VkSwapchainKHR, SwapchainMonitor> swapchain_monitors;
+    std::unordered_map<VkSwapchainKHR, std::unique_ptr<SwapchainMonitor>>
+        swapchain_monitors;
 
   public:
     DeviceContext(InstanceContext& parent_instance,

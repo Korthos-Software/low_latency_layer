@@ -11,13 +11,27 @@ namespace low_latency {
 
 SwapchainMonitor::SwapchainMonitor(const DeviceContext& device,
                                    const bool was_low_latency_requested)
-    : device(device), was_low_latency_requested(was_low_latency_requested),
-      swapchain_worker(
-          std::bind_front(&SwapchainMonitor::do_swapchain_monitor, this)) {}
+    : device(device), was_low_latency_requested(was_low_latency_requested) {}
 
 SwapchainMonitor::~SwapchainMonitor() {}
 
-void SwapchainMonitor::WakeupSemaphore::signal(
+void SwapchainMonitor::update_params(
+    const bool was_low_latency_requested,
+    const std::chrono::milliseconds present_delay) {
+
+    this->was_low_latency_requested = was_low_latency_requested;
+    this->present_delay = present_delay;
+}
+
+ReflexSwapchainMonitor::ReflexSwapchainMonitor(
+    const DeviceContext& device, const bool was_low_latency_requested)
+    : SwapchainMonitor(device, was_low_latency_requested),
+      monitor_worker(
+          std::bind_front(&ReflexSwapchainMonitor::do_monitor, this)) {}
+
+ReflexSwapchainMonitor::~ReflexSwapchainMonitor() {}
+
+void ReflexSwapchainMonitor::WakeupSemaphore::signal(
     const DeviceContext& device) const {
 
     const auto ssi =
@@ -27,7 +41,7 @@ void SwapchainMonitor::WakeupSemaphore::signal(
     THROW_NOT_VKSUCCESS(device.vtable.SignalSemaphore(device.device, &ssi));
 }
 
-void SwapchainMonitor::do_swapchain_monitor(const std::stop_token stoken) {
+void ReflexSwapchainMonitor::do_monitor(const std::stop_token stoken) {
     for (;;) {
         auto lock = std::unique_lock{this->mutex};
         this->cv.wait(lock, stoken,
@@ -59,18 +73,8 @@ void SwapchainMonitor::do_swapchain_monitor(const std::stop_token stoken) {
     }
 }
 
-void SwapchainMonitor::update_params(
-    const bool was_low_latency_requested,
-    const std::chrono::milliseconds present_delay) {
-
-    const auto lock = std::scoped_lock{this->mutex};
-
-    this->was_low_latency_requested = was_low_latency_requested;
-    this->present_delay = present_delay;
-}
-
-void SwapchainMonitor::notify_semaphore(const VkSemaphore& timeline_semaphore,
-                                        const std::uint64_t& value) {
+void ReflexSwapchainMonitor::notify_semaphore(
+    const VkSemaphore& timeline_semaphore, const std::uint64_t& value) {
 
     const auto lock = std::scoped_lock{this->mutex};
 
@@ -90,7 +94,7 @@ void SwapchainMonitor::notify_semaphore(const VkSemaphore& timeline_semaphore,
     this->cv.notify_one();
 }
 
-void SwapchainMonitor::notify_present(
+void ReflexSwapchainMonitor::notify_present(
     const QueueContext::submissions_t& submissions) {
 
     const auto lock = std::scoped_lock{this->mutex};
@@ -114,8 +118,23 @@ void SwapchainMonitor::notify_present(
     this->cv.notify_one();
 }
 
-void SwapchainMonitor::wait_until() {
-    // No reason to lock when using VK_AMD_anti_lag.
+AntiLagSwapchainMonitor::AntiLagSwapchainMonitor(
+    const DeviceContext& device, const bool was_low_latency_requested)
+    : SwapchainMonitor(device, was_low_latency_requested) {}
+
+AntiLagSwapchainMonitor::~AntiLagSwapchainMonitor() {}
+
+void AntiLagSwapchainMonitor::notify_present(
+    const QueueContext::submissions_t& submissions) {
+
+    if (!this->was_low_latency_requested) {
+        return;
+    }
+
+    this->in_flight_submissions.emplace_back(submissions);
+}
+
+void AntiLagSwapchainMonitor::await_submissions() {
     if (this->in_flight_submissions.empty()) {
         return;
     }

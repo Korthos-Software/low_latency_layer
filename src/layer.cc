@@ -20,6 +20,7 @@
 #include "instance_context.hh"
 #include "layer_context.hh"
 #include "queue_context.hh"
+#include "swapchain_monitor.hh"
 #include "timestamp_pool.hh"
 
 namespace low_latency {
@@ -754,8 +755,17 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
         was_low_latency_requested = slci->latencyModeEnable;
     }
 
-    const auto [_, did_emplace] = context->swapchain_monitors.try_emplace(
-        *pSwapchain, *context, was_low_latency_requested);
+    auto insertion = [&]() -> std::unique_ptr<SwapchainMonitor> {
+        if (!layer_context.should_expose_reflex) {
+            return std::make_unique<AntiLagSwapchainMonitor>(
+                *context, was_low_latency_requested);
+        }
+        return std::make_unique<ReflexSwapchainMonitor>(
+            *context, was_low_latency_requested);
+    }();
+    const auto did_emplace = context->swapchain_monitors
+                                 .try_emplace(*pSwapchain, std::move(insertion))
+                                 .second;
     assert(did_emplace);
 
     return VK_SUCCESS;
@@ -801,7 +811,13 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     // and made sure that at least that one completed. I think it's more robust
     // to make sure they all complete.
     for (auto& iter : context->swapchain_monitors) {
-        iter.second.wait_until();
+
+        // All swapchains should be of type AntiLagSwapchainMonitor here.
+        const auto ptr =
+            dynamic_cast<AntiLagSwapchainMonitor*>(iter.second.get());
+        assert(ptr);
+
+        ptr->await_submissions();
     }
 }
 
@@ -813,16 +829,19 @@ VkResult LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain,
 
     // We're associating an application-provided timeline semaphore + value with
     // a swapchain that says 'signal me when we should move past input'.
-    auto& swapchain_monitor = [&]() -> auto& {
+    auto swapchain_monitor_ptr = [&]() -> auto {
         const auto iter = context->swapchain_monitors.find(swapchain);
         assert(iter != std::end(context->swapchain_monitors));
-        return iter->second;
+        const auto ptr =
+            dynamic_cast<ReflexSwapchainMonitor*>(iter->second.get());
+        assert(ptr);
+        return ptr;
     }();
 
     // Tell our swapchain monitor that if they want us to proceed they should
     // signal this semaphore.
-    swapchain_monitor.notify_semaphore(pSleepInfo->signalSemaphore,
-                                       pSleepInfo->value);
+    swapchain_monitor_ptr->notify_semaphore(pSleepInfo->signalSemaphore,
+                                            pSleepInfo->value);
 
     return VK_SUCCESS;
 }

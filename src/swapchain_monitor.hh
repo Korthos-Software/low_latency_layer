@@ -1,7 +1,7 @@
 #ifndef SWAPCHAIN_MONITOR_HH_
 #define SWAPCHAIN_MONITOR_HH_
 
-// The purpose of this file is to provide a SwapchainMonitor class definition.
+// The purpose of this file is to provide a SwapchainMonitor
 
 #include <vulkan/vulkan_core.h>
 
@@ -17,17 +17,41 @@ namespace low_latency {
 
 class DeviceContext;
 
-// A swapchain monitor's job is to provide asynchronous wakeups for threads
-// which request low_latency once the previous presentation has completed.
-// It does this by signalling a semaphore a la VK_NV_low_latency2.
+// Abstract base class for swapchain completion monitoring. Both implementations
+// currently have an option to frame pace, to disable low_latency mode
+// (become a no-op), and must track in_flight_submissions to function.
 class SwapchainMonitor {
-  private:
+  protected:
     const DeviceContext& device;
 
     // Configurarable params for this swapchain.
     std::chrono::milliseconds present_delay = std::chrono::milliseconds{0};
     bool was_low_latency_requested = false;
 
+    std::deque<QueueContext::submissions_t> in_flight_submissions;
+
+  public:
+    SwapchainMonitor(const DeviceContext& device,
+                     const bool was_low_latency_requested);
+    SwapchainMonitor(const SwapchainMonitor&) = delete;
+    SwapchainMonitor(SwapchainMonitor&&) = delete;
+    SwapchainMonitor operator=(const SwapchainMonitor&) = delete;
+    SwapchainMonitor operator=(SwapchainMonitor&&) = delete;
+    virtual ~SwapchainMonitor();
+
+  public:
+    void update_params(const bool was_low_latency_requested,
+                       const std::chrono::milliseconds present_delay);
+
+  public:
+    virtual void
+    notify_present(const QueueContext::submissions_t& submissions) = 0;
+};
+
+// Provides asynchronous monitoring of submissions and signalling of some
+// timeline semaphore via a worker thread.
+class ReflexSwapchainMonitor final : public SwapchainMonitor {
+  private:
     struct WakeupSemaphore {
         VkSemaphore timeline_semaphore;
         std::uint64_t value;
@@ -36,36 +60,42 @@ class SwapchainMonitor {
         void signal(const DeviceContext& device) const;
     };
     std::deque<WakeupSemaphore> wakeup_semaphores;
-    std::deque<QueueContext::submissions_t> in_flight_submissions;
 
     std::mutex mutex;
     std::condition_variable_any cv;
-    std::jthread swapchain_worker;
+    std::jthread monitor_worker;
 
   private:
-    void do_swapchain_monitor(const std::stop_token stoken);
+    void do_monitor(const std::stop_token stoken);
 
   public:
-    SwapchainMonitor(const DeviceContext& device,
-                     const bool was_low_latency_requested);
-    SwapchainMonitor(const SwapchainMonitor&);
-    SwapchainMonitor(SwapchainMonitor&&);
-    SwapchainMonitor operator=(const SwapchainMonitor&);
-    SwapchainMonitor operator=(SwapchainMonitor&&);
-    ~SwapchainMonitor();
+    ReflexSwapchainMonitor(const DeviceContext& device,
+                           const bool was_low_latency_requested);
+    virtual ~ReflexSwapchainMonitor();
 
   public:
-    void update_params(const bool was_low_latency_requested,
-                       const std::chrono::milliseconds present_delay);
-
     void notify_semaphore(const VkSemaphore& timeline_semaphore,
                           const std::uint64_t& value);
 
-    void notify_present(const QueueContext::submissions_t& submissions);
+  public:
+    virtual void
+    notify_present(const QueueContext::submissions_t& submissions) override;
+};
+
+// Much simpler synchronous waiting with no thread requirement.
+class AntiLagSwapchainMonitor final : public SwapchainMonitor {
+  public:
+    AntiLagSwapchainMonitor(const DeviceContext& device,
+                            const bool was_low_latency_requested);
+    virtual ~AntiLagSwapchainMonitor();
 
   public:
     // Synchronously wait until all in-flight submissions have completed.
-    void wait_until();
+    void await_submissions();
+
+  public:
+    virtual void
+    notify_present(const QueueContext::submissions_t& submissions) override;
 };
 
 } // namespace low_latency
