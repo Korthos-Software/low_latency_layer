@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 project(low_latency_layer
-    VERSION 0.01
+    VERSION 0.02
     LANGUAGES CXX
 )
 
@@ -22,22 +22,18 @@ target_link_libraries(${LIBRARY_NAME}
     ${Vulkan_LIBRARIES}
 )
 
-# Copy layer into out/
-set(OUTPUT_DIR "${CMAKE_BINARY_DIR}/out")
-add_custom_command(TARGET ${LIBRARY_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTPUT_DIR}"
+include(GNUInstallDirs)
+# Prefix an absolute directory to our layer's json so the loader knows where the shared library is.
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/low_latency_layer.json.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/low_latency_layer.json"
+    @ONLY
 )
-
-add_custom_command(TARGET ${LIBRARY_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "$<TARGET_FILE:${LIBRARY_NAME}>"
-	"${OUTPUT_DIR}/"
+install(TARGETS ${LIBRARY_NAME}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
-
-add_custom_command(TARGET ${LIBRARY_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${CMAKE_CURRENT_SOURCE_DIR}/low_latency_layer.json"
-	"${OUTPUT_DIR}/"
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/low_latency_layer.json"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/vulkan/implicit_layer.d/"
 )
 
 target_compile_options(${LIBRARY_NAME} PRIVATE
@@ -58,6 +54,6 @@ target_compile_options(${LIBRARY_NAME} PRIVATE
     $<$<NOT:$<CONFIG:Debug>>:-Wno-unused-variable -Wno-unused-but-set-variable>
 
     -Wundef
-    -Wconversion 
+    -Wconversion
     -Wdouble-promotion
 )
