@@ -40,11 +40,15 @@ Create an out-of-tree build directory (creatively we'll use 'build') and install
     $ sudo make install
 ```
 
-To verify that the installation succeeded you can run this command. If it prints '1', you're good to go.
+To verify that the installation succeeded you can run this command. If it prints '1' the loader can see the layer and installation was successful.
 
 ```
     $ ENABLE_LOW_LATENCY_LAYER=1 vulkaninfo 2>/dev/null | grep -q VK_LAYER_NJ3AHXAC_LowLatency && echo 1 || echo 0
 ```
+
+# Usage and Configuration
+
+WIP TODO
 
 # Benchmarks 
 

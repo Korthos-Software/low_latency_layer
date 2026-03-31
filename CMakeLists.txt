@@ -32,7 +32,7 @@ configure_file(
 install(TARGETS ${LIBRARY_NAME}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/low_latency_layer.json"
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/low_latency_layer.json"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/vulkan/implicit_layer.d/"
 )
 
