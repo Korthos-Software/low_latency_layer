@@ -92,8 +92,12 @@ class ReflexSwapchainMonitor final : public SwapchainMonitor {
         std::unique_ptr<QueueContext::Submissions> submissions) override;
 };
 
-// Much simpler synchronous waiting with no thread requirement.
+// Much simpler synchronous waiting without another monitor thread - still need
+// to synchronise across threads however.
 class AntiLagSwapchainMonitor final : public SwapchainMonitor {
+  private:
+    std::mutex mutex;
+
   public:
     AntiLagSwapchainMonitor(const DeviceContext& device,
                             const bool was_low_latency_requested);

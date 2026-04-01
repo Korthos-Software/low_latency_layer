@@ -65,19 +65,25 @@ void ReflexSwapchainMonitor::do_monitor(const std::stop_token stoken) {
             break;
         }
 
+        // Grab the most recent semaphore we want to signal off the queue -
+        // and keep the lock held.
+        const auto wakeup_semaphore = this->wakeup_semaphores.back();
+        this->wakeup_semaphores.clear();
+
         // Look for the latest submission and make sure it's completed.
+        // We have to unlock while we wait.
         if (!this->in_flight_submissions.empty()) {
 
-            this->in_flight_submissions.back()->await_completed();
+            const auto last = std::move(this->in_flight_submissions.back());
             this->in_flight_submissions.clear();
+
+            lock.unlock();
+            last->await_completed();
+        } else {
+            lock.unlock();
         }
 
-        // We might want to signal them all? In theory it's the same timeline
-        // semaphore so obviously it's redundant to signal them one by one. In
-        // almost all cases, there should just be one here anyway.
-        const auto wakeup_semaphore = this->wakeup_semaphores.back();
-        wakeup_semaphores.clear();
-
+        // Signal the semaphore
         wakeup_semaphore.signal(this->device);
     }
 }
@@ -106,14 +112,12 @@ void ReflexSwapchainMonitor::notify_present(
     std::unique_ptr<QueueContext::Submissions> submissions) {
 
     const auto lock = std::scoped_lock{this->mutex};
-
     if (!this->was_low_latency_requested) {
         return;
     }
 
     // Fast path where this work has already completed.
-    // In this case, don't wake up the thread. We can just signal
-    // what we have immediately on this thread.
+    // In this case, don't wake up the thread - we can just signal immediately.
     if (!this->wakeup_semaphores.empty() && submissions->has_completed()) {
         this->wakeup_semaphores.back().signal(this->device);
         this->wakeup_semaphores.clear();
@@ -134,6 +138,7 @@ AntiLagSwapchainMonitor::~AntiLagSwapchainMonitor() {}
 void AntiLagSwapchainMonitor::notify_present(
     std::unique_ptr<QueueContext::Submissions> submissions) {
 
+    const auto lock = std::scoped_lock{this->mutex};
     if (!this->was_low_latency_requested) {
         return;
     }
@@ -143,12 +148,17 @@ void AntiLagSwapchainMonitor::notify_present(
 }
 
 void AntiLagSwapchainMonitor::await_submissions() {
+
+    auto lock = std::unique_lock{this->mutex};
     if (this->in_flight_submissions.empty()) {
         return;
     }
 
-    this->in_flight_submissions.back()->await_completed();
+    const auto last = std::move(this->in_flight_submissions.back());
     this->in_flight_submissions.clear();
+    lock.unlock();
+
+    last->await_completed();
 }
 
 } // namespace low_latency
