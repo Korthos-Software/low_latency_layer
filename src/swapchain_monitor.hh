@@ -12,6 +12,7 @@
 #include <mutex>
 #include <thread>
 
+#include "instance_context.hh"
 #include "queue_context.hh"
 
 namespace low_latency {
@@ -69,7 +70,14 @@ class ReflexSwapchainMonitor final : public SwapchainMonitor {
       public:
         void signal(const DeviceContext& device) const;
     };
-    std::deque<WakeupSemaphore> wakeup_semaphores;
+
+    // A pairing of semaphore -> submissions.
+    // If the Submissions completes then signal the bundled semaphore.
+    struct SemaphoreSubmissions {
+        WakeupSemaphore wakeup_semaphore;
+        std::unique_ptr<QueueContext::Submissions> submissions;
+    };
+    std::deque<SemaphoreSubmissions> semaphore_submissions;
 
     std::mutex mutex;
     std::condition_variable_any cv;

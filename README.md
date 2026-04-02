@@ -66,11 +66,6 @@ PROTON_FORCE_NVAPI=1 LOW_LATENCY_LAYER_EXPOSE_REFLEX=1 LOW_LATENCY_LAYER_SPOOF_N
 
 The 'Boost' mode of Reflex is supported but is functionally identical to 'On' - the layer treats both modes identically.
 
-# Example: Enable NVIDIA spoofing
-LOW_LATENCY_LAYER_SPOOF_NVIDIA=1 ./your-application
-```
-
-
 # Benchmarks 
 
 WIP - not updated for reflex merge
