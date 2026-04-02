@@ -83,6 +83,7 @@ Latency was measured using the NVIDIA Reflex Analyzer integrated into the ASUS P
 ## Overwatch 2
 ![ow2](http://git.nj3.xyz/files/plain/low_latency_layer/overwatch2.png?h=main)
 **Results**
+
 - This DX11 (DXVK) Proton game only supports Reflex - `PROTON_FORCE_NVAPI=1`, `LOW_LATENCY_LAYER_EXPOSE_REFLEX=1` and `LOW_LATENCY_LAYER_SPOOF_NVIDIA=1` were used to force Reflex support through the layer and Proton, regardless of the underlying hardware.
 - This was one of the only applications tested that allowed us to scale render resolution to 4k (we're avoiding gamescope for latency reasons). This resulted in a greater GPU backlog than would usually be present at 1080p. This test is probably more indicative of the latency improvements most setups would find as we're not pushing hundreds of FPS - we recorded around 160fps in this scenario.
 - Reflex provides a 16.4ms median latency improvement, which is around a 50% reduction in total system latency.
@@ -90,6 +91,7 @@ Latency was measured using the NVIDIA Reflex Analyzer integrated into the ASUS P
 ## The Finals
 ![tf](http://git.nj3.xyz/files/plain/low_latency_layer/the_finals.png?h=main)
 **Results**
+
 - This DX12 (VKD3D) Proton game supports both Anti-Lag and Reflex. We can see a direct comparison of the two technologies here. We didn't expect such a large delta and the reason for this is under investigation.
 - Identical launch options to Overwatch 2 were required for Reflex.
 - We saw a reduction of around 6ms for Anti-Lag and 8ms for Reflex - approximately  a 33% and 40% latency reduction respectively from the baseline.
@@ -98,6 +100,7 @@ Latency was measured using the NVIDIA Reflex Analyzer integrated into the ASUS P
 ## Counter-Strike 2
 ![cs2](http://git.nj3.xyz/files/plain/low_latency_layer/cs2.png?h=main)
 **Results**
+
 - Counter-Strike is a Vulkan Linux native game. It's the fastest of the three applications tested, yet we still see a strong improvement here. We sat at around 520fps for the duration of these tests.
 - Reflex appears to pull ahead slightly, but this is not statistically significant.
 - Both latency reduction technologies reduced total system latency by about 20%, or 1.5ms. The actual benefit is likely far greater and can be felt during actual gameplay.
