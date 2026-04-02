@@ -2,11 +2,11 @@
 
 A C++23 implicit Vulkan layer that reduces click-to-photon latency by implementing both AMD and NVIDIA's latency reduction technologies.
 
-The layer allows AMD or Intel hardware to provide implementations for and switch between `VK_NV_low_latency2` and `VK_AMD_anti_lag` device extensions. This capability, coupled with work that forwards relevant calls in [dvxk-nvapi](https://github.com/jp7677/dxvk-nvapi/), allows the use of these technologies despite the lack of a driver-level implementation.
+By providing hardware-agnostic implementations of the `VK_NV_low_latency2` and `VK_AMD_anti_lag` device extensions, this layer brings Reflex and Anti-Lag capabilities to AMD and Intel GPUs. When paired with [dvxk-nvapi](https://github.com/jp7677/dxvk-nvapi/) to forward the relevant calls, it completely bypasses the need for official driver-level support.
 
 The layer also eliminates a hardware support disparity as considerably more applications support NVIDIA's Reflex than AMD's Anti-Lag.
 
-[Benchmarks are available here.](#benchmarks)
+[Benchmarks are available here.](#testing-and-benchmarks)
 
 # Planned
 
@@ -32,7 +32,7 @@ Clone this repo.
 
 Create an out-of-tree build directory (creatively we'll use 'build') and install.
 
-> ⚠️ **WARNING:** You are likely going to have to install your distro's `vulkan-headers`, `vulkan-utility-libraries`, and possibly even `cmake` packages before proceeding. If you see an error here their absense is almost certainly the reason.
+> ⚠️ **WARNING:** You are likely going to have to install your distro's `vulkan-headers`, `vulkan-utility-libraries`, and possibly even `cmake` packages before proceeding. If you see an error here their absence is almost certainly the reason.
 
 ```
     $ cmake -B build ./
@@ -66,13 +66,42 @@ PROTON_FORCE_NVAPI=1 LOW_LATENCY_LAYER_EXPOSE_REFLEX=1 LOW_LATENCY_LAYER_SPOOF_N
 
 The 'Boost' mode of Reflex is supported but is functionally identical to 'On' - the layer treats both modes identically.
 
-# Benchmarks 
+# Testing and Benchmarks
 
-WIP - not updated for reflex merge
+Benchmarks were conducted under worst-case conditions using high-end AMD hardware. In systems with lower GPU overhead, these latency reductions may be even more pronounced.
+
+## Setup
+*   **GPU:** ASUS TUF Radeon RX 7900 XTX (flashed 550W Aqua Extreme BIOS) 1350MHz VRAM watercooled
+*   **CPU:** AMD Ryzen 7 9800X3D 102.5MHz eCLK -15 CO 2133MHz FCLK delid watercooled
+*   **Memory:** 64GB 2x32GB Hynix A-Die 6000MT/s CL28-36-36-30 GDM:off Nitro:1-2-0
+
+We used Gentoo running KDE Plasma 6.5.5-rc1. Direct scanout was enabled throughout the testing process, verified as KWin’s 'Compositing' watermark disappeared when in fullscreen.
+
+## Methodology
+Latency was measured using the NVIDIA Reflex Analyzer integrated into the ASUS PG248QP. To ensure precision and remove game-induced variance, we utilized an automated input script that triggered an immediate view-angle change upon mouse click. This approach bypasses the inconsistencies of variable-speed animations and game-engine tickrate jitter, providing a consistent measurement of total click-to-photon latency.
+
+## Overwatch 2
+![ow2](http://git.nj3.xyz/files/plain/low_latency_layer/overwatch2.png?h=main)
+**Results**
+- This DX11 (DXVK) Proton game only supports Reflex - `PROTON_FORCE_NVAPI=1`, `LOW_LATENCY_LAYER_EXPOSE_REFLEX=1` and `LOW_LATENCY_LAYER_SPOOF_NVIDIA=1` were used to force Reflex support through the layer and Proton, regardless of the underlying hardware.
+- This was one of the only applications tested that allowed us to scale render resolution to 4k (we're avoiding gamescope for latency reasons). This resulted in a greater GPU backlog than would usually be present at 1080p. This test is probably more indicative of the latency improvements most setups would find as we're not pushing hundreds of FPS - we recorded around 160fps in this scenario.
+- Reflex provides a 16.4ms median latency improvement, which is around a 50% reduction in total system latency.
+
+## The Finals
+![tf](http://git.nj3.xyz/files/plain/low_latency_layer/the_finals.png?h=main)
+**Results**
+- This DX12 (VKD3D) Proton game supports both Anti-Lag and Reflex. We can see a direct comparison of the two technologies here. We didn't expect such a large delta and the reason for this is under investigation.
+- Identical launch options to Overwatch 2 were required for Reflex.
+- We saw a reduction of around 6ms for Anti-Lag and 8ms for Reflex - approximately  a 33% and 40% latency reduction respectively from the baseline.
+- Average FPS was around 260 during testing.
 
 ## Counter-Strike 2
 ![cs2](http://git.nj3.xyz/files/plain/low_latency_layer/cs2.png?h=main)
+**Results**
+- Counter-Strike is a Vulkan Linux native game. It's the fastest of the three applications tested, yet we still see a strong improvement here. We sat at around 520fps for the duration of these tests.
+- Reflex appears to pull ahead slightly, but this is not statistically significant.
+- Both latency reduction technologies reduced total system latency by about 20%, or 1.5ms. The actual benefit is likely far greater and can be felt during actual gameplay.
 
-## The Finals
-![tf](http://git.nj3.xyz/files/plain/low_latency_layer/tf.png?h=main)
+# Contact
 
+Email me to report issues or for help: nj3ahxac@gmail.com
