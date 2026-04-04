@@ -1002,6 +1002,10 @@ LowLatency_GetDeviceProcAddr(VkDevice device, const char* const pName) {
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 LowLatency_GetInstanceProcAddr(VkInstance instance, const char* const pName) {
+    if (!pName) {
+        return nullptr;
+    }
+
     if (const auto it = instance_functions.find(pName);
         it != std::end(instance_functions)) {
 

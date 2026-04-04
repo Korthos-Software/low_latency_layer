@@ -82,7 +82,7 @@ class LayerContext final : public Context {
     std::shared_ptr<dispatch_context_t<DT>> get_context(const DT& dt) {
         const auto key = get_key(dt);
 
-        const auto lock = std::scoped_lock(this->mutex);
+        const auto lock = std::scoped_lock{this->mutex};
         const auto it = this->contexts.find(key);
         assert(it != std::end(this->contexts));
 
