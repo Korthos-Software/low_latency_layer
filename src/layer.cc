@@ -792,8 +792,11 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     // but it's easy to do the inverse. AMD's extension piggybacks on NVIDIA's
     // more complicated implementation.
 
-    const auto present_delay = [&]() {
+    const auto present_delay = [&]() -> std::chrono::milliseconds {
         using namespace std::chrono;
+        if (!pData->maxFPS) {
+            return 0ms;
+        }
         return duration_cast<milliseconds>(1s / pData->maxFPS);
     }();
 
