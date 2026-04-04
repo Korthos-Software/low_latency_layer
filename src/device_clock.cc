@@ -66,9 +66,8 @@ DeviceClock::ticks_to_time(const std::uint64_t& ticks) const {
 
     const auto diff_nsec =
         static_cast<std::int64_t>(static_cast<double>(diff) * ns_tick + 0.5);
-    const auto delta = std::chrono::nanoseconds(
-        this->host_ns + static_cast<std::uint64_t>(diff_nsec));
-    return time_point_t{delta};
+    const auto delta_ns = static_cast<std::int64_t>(this->host_ns) + diff_nsec;
+    return time_point_t{std::chrono::nanoseconds(delta_ns)};
 }
 
 } // namespace low_latency
