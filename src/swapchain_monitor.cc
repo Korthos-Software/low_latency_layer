@@ -2,6 +2,7 @@
 #include "device_context.hh"
 #include "helper.hh"
 
+#include <chrono>
 #include <vulkan/vulkan_core.h>
 
 #include <functional>
@@ -17,7 +18,7 @@ SwapchainMonitor::~SwapchainMonitor() {}
 
 void SwapchainMonitor::update_params(
     const bool was_low_latency_requested,
-    const std::chrono::milliseconds present_delay) {
+    const std::chrono::microseconds present_delay) {
 
     const auto lock = std::scoped_lock{this->mutex};
 

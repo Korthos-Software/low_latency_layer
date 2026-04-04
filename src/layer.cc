@@ -871,11 +871,11 @@ VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
     if (pSleepModeInfo) {
         context->update_params(
             swapchain,
-            std::chrono::milliseconds{pSleepModeInfo->minimumIntervalUs},
+            std::chrono::microseconds{pSleepModeInfo->minimumIntervalUs},
             pSleepModeInfo->lowLatencyMode);
     } else {
         // If pSleepModeInfo is nullptr, it means no delay and no low latency.
-        context->update_params(swapchain, std::chrono::milliseconds{0}, false);
+        context->update_params(swapchain, std::chrono::microseconds{0}, false);
     }
 
     return VK_SUCCESS;

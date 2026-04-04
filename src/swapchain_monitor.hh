@@ -31,7 +31,7 @@ class SwapchainMonitor {
     std::mutex mutex;
 
     // Configurarable params for this swapchain.
-    std::chrono::milliseconds present_delay = std::chrono::milliseconds{0};
+    std::chrono::microseconds present_delay = std::chrono::microseconds{0};
     bool was_low_latency_requested = false;
 
     std::deque<std::unique_ptr<QueueContext::Submissions>>
@@ -53,7 +53,7 @@ class SwapchainMonitor {
 
   public:
     void update_params(const bool was_low_latency_requested,
-                       const std::chrono::milliseconds present_delay);
+                       const std::chrono::microseconds present_delay);
 
   public:
     virtual void

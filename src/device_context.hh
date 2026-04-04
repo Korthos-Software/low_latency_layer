@@ -49,7 +49,7 @@ class DeviceContext final : public Context {
     // Updates the settings associated with that swapchain. If no swapchain
     // target is provided all swapchains are set to this value.
     void update_params(const std::optional<VkSwapchainKHR> target,
-                       const std::chrono::milliseconds& present_delay,
+                       const std::chrono::microseconds& present_delay,
                        const bool was_low_latency_requested);
 
     void notify_present(const VkSwapchainKHR& swapchain,

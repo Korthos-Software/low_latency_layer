@@ -30,7 +30,7 @@ DeviceContext::~DeviceContext() {
 
 void DeviceContext::update_params(
     const std::optional<VkSwapchainKHR> target,
-    const std::chrono::milliseconds& present_delay,
+    const std::chrono::microseconds& present_delay,
     const bool was_low_latency_requested) {
 
     // If we don't have a target (AMD's anti_lag doesn't differentiate between
