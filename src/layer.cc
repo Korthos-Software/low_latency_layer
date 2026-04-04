@@ -846,8 +846,9 @@ VkResult LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain,
     return VK_SUCCESS;
 }
 
-void QueueNotifyOutOfBandNV(VkQueue queue,
-                            const VkOutOfBandQueueTypeInfoNV* pQueueTypeInfo) {
+void QueueNotifyOutOfBandNV(
+    VkQueue queue,
+    [[maybe_unused]] const VkOutOfBandQueueTypeInfoNV* pQueueTypeInfo) {
 
     // Kind of interesting how you can't turn it back on once it's turned off.
     // Also I really have no idea why pQueueTypeInfo's VkOutOfBandQueueTypeNV
@@ -874,13 +875,12 @@ VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
     return VK_SUCCESS;
 }
 
-void SetLatencyMarkerNV(VkDevice device, VkSwapchainKHR swapchain,
-                        const VkSetLatencyMarkerInfoNV* pLatencyMarkerInfo) {
+void SetLatencyMarkerNV(VkDevice, VkSwapchainKHR,
+                        const VkSetLatencyMarkerInfoNV*) {
     // STUB
 }
 
-void GetLatencyTimingsNV(VkDevice device, VkSwapchainKHR swapchain,
-                         VkGetLatencyMarkerInfoNV* pLatencyMarkerInfo) {
+void GetLatencyTimingsNV(VkDevice, VkSwapchainKHR, VkGetLatencyMarkerInfoNV*) {
     // STUB
 }
 

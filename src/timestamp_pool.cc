@@ -155,7 +155,7 @@ void TimestampPool::do_reaper(const std::stop_token stoken) {
 }
 
 void TimestampPool::Handle::write_command(
-    const VkPipelineStageFlagBits2& bit) const {
+    const VkPipelineStageFlagBits2 bit) const {
 
     const auto cbbi = VkCommandBufferBeginInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -170,9 +170,8 @@ void TimestampPool::Handle::write_command(
     THROW_NOT_VKSUCCESS(vtable.ResetCommandBuffer(this->command_buffer, 0));
     THROW_NOT_VKSUCCESS(vtable.BeginCommandBuffer(this->command_buffer, &cbbi));
 
-    vtable.CmdWriteTimestamp2KHR(
-        this->command_buffer, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
-        this->query_pool, static_cast<std::uint32_t>(this->query_index));
+    vtable.CmdWriteTimestamp2KHR(this->command_buffer, bit, this->query_pool,
+                                 static_cast<std::uint32_t>(this->query_index));
 
     THROW_NOT_VKSUCCESS(vtable.EndCommandBuffer(this->command_buffer));
 }
