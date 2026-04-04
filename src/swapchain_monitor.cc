@@ -62,19 +62,26 @@ void ReflexSwapchainMonitor::do_monitor(const std::stop_token stoken) {
         this->cv.wait(lock, stoken,
                       [&]() { return !this->semaphore_submissions.empty(); });
 
-        if (stoken.stop_requested()) {
-            // Small chance an application might need outstanding semaphores
-            // to be signalled if it's closing to avoid a hang.
+        // No work implies stopped so break immediately.
+        if (this->semaphore_submissions.empty()) {
             break;
         }
 
-        // Grab the most recent semaphore we want to signal off the queue.
+        // Grab the most recent semaphore we want to signal off the queue and
+        // clear it.
         const auto semaphore_submission =
             std::move(this->semaphore_submissions.back());
         this->semaphore_submissions.clear();
 
+        // If we're stopping, signal the semaphore and don't worry about work
+        // actually completing.
+        if (stoken.stop_requested()) {
+            semaphore_submission.wakeup_semaphore.signal(this->device);
+            break;
+        }
+
+        // Unlock, wait for work to finish, signal semaphore.
         lock.unlock();
-        // Wait for work to finish and signal its associated semaphore.
         semaphore_submission.submissions->await_completed();
         semaphore_submission.wakeup_semaphore.signal(this->device);
     }
@@ -82,12 +89,10 @@ void ReflexSwapchainMonitor::do_monitor(const std::stop_token stoken) {
 
 void ReflexSwapchainMonitor::notify_semaphore(
     const VkSemaphore& timeline_semaphore, const std::uint64_t& value) {
-
     auto lock = std::unique_lock{this->mutex};
 
     const auto wakeup_semaphore = WakeupSemaphore{
         .timeline_semaphore = timeline_semaphore, .value = value};
-
     if (!this->was_low_latency_requested ||
         this->in_flight_submissions.empty()) {
 
