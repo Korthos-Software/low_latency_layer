@@ -19,6 +19,8 @@ void SwapchainMonitor::update_params(
     const bool was_low_latency_requested,
     const std::chrono::milliseconds present_delay) {
 
+    const auto lock = std::scoped_lock{this->mutex};
+
     this->was_low_latency_requested = was_low_latency_requested;
     this->present_delay = present_delay;
 }

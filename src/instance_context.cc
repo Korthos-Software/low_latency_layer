@@ -13,7 +13,7 @@ InstanceContext::InstanceContext(const LayerContext& parent_context,
 InstanceContext::~InstanceContext() {
     // Similar to devices, we should own the only shared ptr at this point so
     // they destruct now.
-    for (const auto& [device, device_context] : this->phys_devices) {
+    for (const auto& [device, device_context] : this->physical_devices) {
         assert(device_context.unique());
     }
 }

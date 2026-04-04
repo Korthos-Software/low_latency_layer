@@ -12,7 +12,6 @@
 #include <mutex>
 #include <thread>
 
-#include "instance_context.hh"
 #include "queue_context.hh"
 
 namespace low_latency {
@@ -28,6 +27,8 @@ class SwapchainMonitor {
 
   protected:
     const DeviceContext& device;
+
+    std::mutex mutex;
 
     // Configurarable params for this swapchain.
     std::chrono::milliseconds present_delay = std::chrono::milliseconds{0};
@@ -79,7 +80,6 @@ class ReflexSwapchainMonitor final : public SwapchainMonitor {
     };
     std::deque<SemaphoreSubmissions> semaphore_submissions;
 
-    std::mutex mutex;
     std::condition_variable_any cv;
     std::jthread monitor_worker;
 

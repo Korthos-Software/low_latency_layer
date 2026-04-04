@@ -47,11 +47,8 @@ target_compile_options(${LIBRARY_NAME} PRIVATE
 
     -Wall
     -Wextra
-    -Wno-unused-parameter
-    -Wno-unused-function
     -Wno-sign-conversion
     -Wno-missing-field-initializers
-    $<$<NOT:$<CONFIG:Debug>>:-Wno-unused-variable -Wno-unused-but-set-variable>
 
     -Wundef
     -Wconversion

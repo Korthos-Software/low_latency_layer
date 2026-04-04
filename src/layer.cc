@@ -102,7 +102,7 @@ DestroyInstance(VkInstance instance, const VkAllocationCallbacks* allocator) {
 
         // Erase our physical devices owned by this instance from the global
         // context.
-        for (const auto& [key, _] : context->phys_devices) {
+        for (const auto& [key, _] : context->physical_devices) {
             assert(layer_context.contexts.contains(key));
             layer_context.contexts.erase(key);
         }

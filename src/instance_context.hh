@@ -21,7 +21,7 @@ struct InstanceContext final : public Context {
     const VkuInstanceDispatchTable vtable;
 
     std::unordered_map<void*, std::shared_ptr<PhysicalDeviceContext>>
-        phys_devices;
+        physical_devices;
 
   public:
     InstanceContext(const LayerContext& parent_context,
