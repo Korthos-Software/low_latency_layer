@@ -506,7 +506,7 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
     const auto& vtable = context->device.vtable;
 
     if (const auto res = vtable.QueuePresentKHR(queue, present_info);
-        res != VK_SUCCESS) {
+        res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
 
         return res;
     }
