@@ -703,7 +703,7 @@ GetPhysicalDeviceProperties2KHR(VkPhysicalDevice physical_device,
     return GetPhysicalDeviceProperties2(physical_device, pProperties);
 }
 
-static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
+static VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
     VkPhysicalDevice physical_device,
     const VkPhysicalDeviceSurfaceInfo2KHR* pSurfaceInfo,
     VkSurfaceCapabilities2KHR* pSurfaceCapabilities) {
@@ -711,19 +711,23 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
     const auto context = layer_context.get_context(physical_device);
     const auto& vtable = context->instance.vtable;
 
-    vtable.GetPhysicalDeviceSurfaceCapabilities2KHR(
-        physical_device, pSurfaceInfo, pSurfaceCapabilities);
+    if (const auto result = vtable.GetPhysicalDeviceSurfaceCapabilities2KHR(
+            physical_device, pSurfaceInfo, pSurfaceCapabilities);
+        result != VK_SUCCESS) {
+
+        return result;
+    }
 
     // Don't do this unless we're spoofing nvidia.
     if (!context->instance.layer.should_expose_reflex) {
-        return;
+        return VK_SUCCESS;
     }
 
     const auto lsc = find_next<VkLatencySurfaceCapabilitiesNV>(
         pSurfaceCapabilities,
         VK_STRUCTURE_TYPE_LATENCY_SURFACE_CAPABILITIES_NV);
     if (!lsc) {
-        return;
+        return VK_SUCCESS;
     }
 
     // I eyeballed these - there might be more that we can support.
@@ -738,7 +742,7 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
     // They're asking how many we want to return.
     if (!lsc->pPresentModes) {
         lsc->presentModeCount = num_supported_modes;
-        return;
+        return VK_SUCCESS;
     }
 
     // Finally we can write what surfaces are capable.
@@ -749,6 +753,7 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceSurfaceCapabilities2KHR(
                         lsc->pPresentModes);
 
     lsc->presentModeCount = num_to_write;
+    return VK_SUCCESS;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
