@@ -572,34 +572,50 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
         return VK_SUCCESS;
     }
 
-    auto target_count = std::uint32_t{0};
+    auto underlying_count = std::uint32_t{0};
     if (const auto result = vtable.EnumerateDeviceExtensionProperties(
-            physical_device, nullptr, &target_count, nullptr);
+            physical_device, nullptr, &underlying_count, nullptr);
         result != VK_SUCCESS) {
 
         return result;
     }
-    target_count += 1;
 
+    // We have to fill this on our side because we need to know if it's already
+    // supported as to avoid inserting a duplicate.
+    auto underlying = std::vector<VkExtensionProperties>(underlying_count);
+    if (const auto result = vtable.EnumerateDeviceExtensionProperties(
+            physical_device, nullptr, &underlying_count, std::data(underlying));
+        result != VK_SUCCESS) {
+
+        return result;
+    }
+
+    const auto requires_insert =
+        std::ranges::none_of(underlying, [&](const auto& ep) {
+            return std::string_view{ep.extensionName} ==
+                   extension_properties.extensionName;
+        });
+
+    const auto target_count = underlying_count + requires_insert;
     if (!pProperties) {
         *pPropertyCount = target_count;
         return VK_SUCCESS;
     }
 
-    auto written = *pPropertyCount;
-    if (const auto result = vtable.EnumerateDeviceExtensionProperties(
-            physical_device, nullptr, &written, pProperties);
-        result != VK_SUCCESS) {
+    std::ranges::copy_n(std::begin(underlying),
+                        std::min(underlying_count, *pPropertyCount),
+                        pProperties);
 
-        return result;
-    }
+    const auto written_count = std::min(target_count, *pPropertyCount);
+    *pPropertyCount = written_count;
 
-    if (*pPropertyCount < target_count) {
+    if (written_count < target_count) {
         return VK_INCOMPLETE;
     }
 
-    pProperties[target_count - 1] = extension_properties;
-    *pPropertyCount = target_count;
+    if (requires_insert) {
+        pProperties[target_count - 1] = extension_properties;
+    }
 
     return VK_SUCCESS;
 }
