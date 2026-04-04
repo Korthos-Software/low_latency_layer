@@ -141,6 +141,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumeratePhysicalDevices(
             iter->second =
                 std::make_shared<PhysicalDeviceContext>(*context, device);
         }
+
+        context->physical_devices.emplace(
+            key, std::static_pointer_cast<PhysicalDeviceContext>(iter->second));
     }
 
     return VK_SUCCESS;
