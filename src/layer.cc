@@ -505,10 +505,9 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
     const auto context = layer_context.get_context(queue);
     const auto& vtable = context->device.vtable;
 
-    if (const auto res = vtable.QueuePresentKHR(queue, present_info);
-        res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
-
-        return res;
+    const auto result = vtable.QueuePresentKHR(queue, present_info);
+    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        return result;
     }
 
     const auto pid = find_next<VkPresentIdKHR>(
@@ -524,7 +523,7 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
         context->notify_present(swapchain, present_id);
     }
 
-    return VK_SUCCESS;
+    return result;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
