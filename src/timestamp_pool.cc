@@ -176,15 +176,11 @@ void TimestampPool::Handle::write_command(
     THROW_NOT_VKSUCCESS(vtable.EndCommandBuffer(this->command_buffer));
 }
 
-struct QueryResult {
-    std::uint64_t value;
-    std::uint64_t available;
-};
 std::optional<DeviceClock::time_point_t> TimestampPool::Handle::get_time() {
     const auto& context = this->timestamp_pool.queue_context.device;
     const auto& vtable = context.vtable;
 
-    auto query_result = QueryResult{};
+    auto query_result = std::array<std::uint64_t, 2>{};
 
     const auto result = vtable.GetQueryPoolResults(
         context.device, this->query_pool,
@@ -196,22 +192,18 @@ std::optional<DeviceClock::time_point_t> TimestampPool::Handle::get_time() {
         throw result;
     }
 
-    if (!query_result.available) {
+    if (!query_result[1]) {
         return std::nullopt;
     }
 
-    return context.clock->ticks_to_time(query_result.value);
+    return context.clock->ticks_to_time(query_result[0]);
 }
 
 DeviceClock::time_point_t TimestampPool::Handle::await_time() {
     const auto& context = this->timestamp_pool.queue_context.device;
     const auto& vtable = context.vtable;
 
-    struct QueryResult {
-        std::uint64_t value;
-        std::uint64_t available;
-    };
-    auto query_result = QueryResult{};
+    auto query_result = std::array<std::uint64_t, 2>{};
 
     THROW_NOT_VKSUCCESS(vtable.GetQueryPoolResults(
         context.device, this->query_pool,
@@ -219,9 +211,9 @@ DeviceClock::time_point_t TimestampPool::Handle::await_time() {
         &query_result, sizeof(query_result),
         VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT |
             VK_QUERY_RESULT_WAIT_BIT));
-    assert(query_result.available);
+    assert(query_result[1]);
 
-    return context.clock->ticks_to_time(query_result.value);
+    return context.clock->ticks_to_time(query_result[0]);
 }
 
 TimestampPool::~TimestampPool() {}
