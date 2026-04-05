@@ -5,6 +5,8 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <thread>
+
 namespace low_latency {
 
 AntiLagDeviceStrategy::AntiLagDeviceStrategy(DeviceContext& device)
@@ -22,33 +24,45 @@ void AntiLagDeviceStrategy::notify_update(const VkAntiLagDataAMD& data) {
         if (!data.maxFPS) {
             return 0us;
         }
-        return duration_cast<microseconds>(1s / data.maxFPS);
+        return duration_cast<microseconds>(1s) / data.maxFPS;
     }();
 
     if (!data.pPresentationInfo) {
         return;
     }
 
-    // If we're at the input stage, start marking submissions as relevant.
     // If we're at the present stage, stop collecting submissions by making
     // our frame_index nullopt.
     if (data.pPresentationInfo->stage == VK_ANTI_LAG_STAGE_PRESENT_AMD) {
         this->frame_index.reset();
         return;
     }
+
+    // If we're at the input stage, start marking submissions as relevant.
     this->frame_index.emplace(data.pPresentationInfo->frameIndex);
 
-    // We're in input now. Wait for all queue submissions to complete.
-    const auto device_lock = std::shared_lock{this->device.mutex};
-    for (const auto& iter : this->device.queues) {
-        const auto& queue = iter.second;
+    { // Input stage needs to wait for all queue submissions to complete.
+        const auto device_lock = std::shared_lock{this->device.mutex};
+        for (const auto& iter : this->device.queues) {
+            const auto& queue = iter.second;
 
-        const auto strategy =
-            dynamic_cast<AntiLagQueueStrategy*>(queue->strategy.get());
-        assert(strategy);
+            const auto strategy =
+                dynamic_cast<AntiLagQueueStrategy*>(queue->strategy.get());
+            assert(strategy);
 
-        strategy->await_complete();
+            strategy->await_complete();
+        }
     }
+
+    // We might need to wait a little more time to meet our frame limit, if
+    // necessary.
+    using namespace std::chrono;
+    if (this->delay != 0us && this->previous_input_release.has_value()) {
+        std::this_thread::sleep_until(*this->previous_input_release +
+                                      this->delay);
+    }
+
+    this->previous_input_release = steady_clock::now();
 }
 
 bool AntiLagDeviceStrategy::should_track_submissions() {
