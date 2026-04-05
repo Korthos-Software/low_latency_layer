@@ -390,31 +390,24 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     // pointers to our command buffer arrays - of which the position in memory
     // of can change on vector reallocation. So we use unique_ptrs here.
     auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
+    auto submissions = std::vector<std::unique_ptr<Submission>>{};
 
-    // notify_submit() should take copies of these shared_ptrs and store
-    // them for the duration of our call, but saving them here is a bit
-    // more explicit + insurance if that changes.
-    auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
-
-    [[maybe_unused]] const auto now = DeviceClock::now();
+    const auto now = DeviceClock::now();
+    const auto submit_span = std::span{submit_infos, submit_count};
 
     std::ranges::transform(
-        std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
-        [&](const auto& submit) {
+        submit_span, std::back_inserter(next_submits), [&](const auto& submit) {
             const auto head_handle = context->timestamp_pool->acquire();
             head_handle->write_command(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
             const auto tail_handle = context->timestamp_pool->acquire();
             tail_handle->write_command(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 
-            context->strategy->notify_submit(
-                submit, std::make_unique<Submission>(Submission{
-                            .start = head_handle,
-                            .end = tail_handle,
-                            .time = now,
-                        }));
+            submissions.push_back(std::make_unique<Submission>(Submission{
+                .start = head_handle,
+                .end = tail_handle,
+                .time = now,
+            }));
 
-            handles.emplace_back(head_handle);
-            handles.emplace_back(tail_handle);
             next_cbs.emplace_back([&]() -> auto {
                 auto cbs = std::make_unique<cbs_t>();
                 cbs->push_back(head_handle->command_buffer);
@@ -432,9 +425,19 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
             return next_submit;
         });
 
-    return vtable.QueueSubmit(
+    const auto result = vtable.QueueSubmit(
         queue, static_cast<std::uint32_t>(std::size(next_submits)),
         std::data(next_submits), fence);
+
+    // We have to notify after we submit - otherwise we have a race where we
+    // wait for work that wasn't submitted.
+    for (auto&& [submit, submission] :
+         std::views::zip(submit_span, submissions)) {
+
+        context->strategy->notify_submit(submit, std::move(submission));
+    }
+
+    return result;
 }
 
 // The logic for this function is identical to vkSubmitInfo.
@@ -452,27 +455,24 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     using cbs_t = std::vector<VkCommandBufferSubmitInfo>;
     auto next_submits = std::vector<VkSubmitInfo2>{};
     auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
-    auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
+    auto submissions = std::vector<std::unique_ptr<Submission>>{};
 
     const auto now = DeviceClock::now();
+    const auto submit_span = std::span{submit_infos, submit_count};
 
     std::ranges::transform(
-        std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
-        [&](const auto& submit) {
+        submit_span, std::back_inserter(next_submits), [&](const auto& submit) {
             const auto head_handle = context->timestamp_pool->acquire();
             head_handle->write_command(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
             const auto tail_handle = context->timestamp_pool->acquire();
             tail_handle->write_command(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
 
-            context->strategy->notify_submit(
-                submit, std::make_unique<Submission>(Submission{
-                            .start = head_handle,
-                            .end = tail_handle,
-                            .time = now,
-                        }));
+            submissions.push_back(std::make_unique<Submission>(Submission{
+                .start = head_handle,
+                .end = tail_handle,
+                .time = now,
+            }));
 
-            handles.emplace_back(head_handle);
-            handles.emplace_back(tail_handle);
             next_cbs.emplace_back([&]() -> auto {
                 auto cbs = std::make_unique<cbs_t>();
                 cbs->push_back(VkCommandBufferSubmitInfo{
@@ -496,9 +496,17 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
             return next_submit;
         });
 
-    return vtable.QueueSubmit2(
+    const auto result = vtable.QueueSubmit2(
         queue, static_cast<std::uint32_t>(std::size(next_submits)),
         std::data(next_submits), fence);
+
+    for (auto&& [submit, submission] :
+         std::views::zip(submit_span, submissions)) {
+
+        context->strategy->notify_submit(submit, std::move(submission));
+    }
+
+    return result;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL
