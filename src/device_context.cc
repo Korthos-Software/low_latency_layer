@@ -28,34 +28,4 @@ DeviceContext::~DeviceContext() {
     }
 }
 
-void DeviceContext::update_params(
-    const std::optional<VkSwapchainKHR> target,
-    const std::chrono::microseconds& present_delay,
-    const bool was_low_latency_requested) {
-
-    // If we don't have a target (AMD's anti_lag doesn't differentiate between
-    // swapchains) just write it to everything.
-    if (!target.has_value()) {
-        for (auto& iter : this->swapchain_monitors) {
-            iter.second->update_params(was_low_latency_requested,
-                                       present_delay);
-        }
-        return;
-    }
-
-    const auto iter = this->swapchain_monitors.find(*target);
-    assert(iter != std::end(this->swapchain_monitors));
-    iter->second->update_params(was_low_latency_requested, present_delay);
-}
-
-void DeviceContext::notify_present(
-    const VkSwapchainKHR& swapchain,
-    std::unique_ptr<QueueContext::Submissions> submissions) {
-
-    const auto iter = this->swapchain_monitors.find(swapchain);
-    assert(iter != std::end(this->swapchain_monitors));
-
-    iter->second->notify_present(std::move(submissions));
-}
-
 } // namespace low_latency

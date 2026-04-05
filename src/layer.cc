@@ -20,7 +20,6 @@
 #include "instance_context.hh"
 #include "layer_context.hh"
 #include "queue_context.hh"
-#include "swapchain_monitor.hh"
 #include "timestamp_pool.hh"
 
 namespace low_latency {
@@ -394,7 +393,7 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     // more explicit + insurance if that changes.
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
-    const auto now = DeviceClock::now();
+    [[maybe_unused]] const auto now = DeviceClock::now();
 
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
@@ -404,9 +403,6 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
 
             const auto tail_handle = context->timestamp_pool->acquire();
             tail_handle->write_command(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-
-            context->notify_submit(extract_present_id(submit), head_handle,
-                                   tail_handle, now);
 
             handles.emplace_back(head_handle);
             handles.emplace_back(tail_handle);
@@ -449,7 +445,7 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
-    const auto now = DeviceClock::now();
+    [[maybe_unused]] const auto now = DeviceClock::now();
 
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
@@ -458,9 +454,6 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
             head_handle->write_command(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
             const auto tail_handle = context->timestamp_pool->acquire();
             tail_handle->write_command(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
-
-            context->notify_submit(extract_present_id(submit), head_handle,
-                                   tail_handle, now);
 
             handles.emplace_back(head_handle);
             handles.emplace_back(tail_handle);
@@ -514,13 +507,11 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
         present_info, VK_STRUCTURE_TYPE_PRESENT_ID_KHR);
 
     for (auto i = std::uint32_t{0}; i < present_info->swapchainCount; ++i) {
-        const auto& swapchain = present_info->pSwapchains[i];
+        [[maybe_unused]] const auto& swapchain = present_info->pSwapchains[i];
 
         // For VK_AMD_anti_lag, providing a pPresentId isn't part of the spec.
         // So we just set it to 0 if it isn't provided.
-        const auto present_id = pid ? pid->pPresentIds[i] : 0;
-
-        context->notify_present(swapchain, present_id);
+        [[maybe_unused]] const auto present_id = pid ? pid->pPresentIds[i] : 0;
     }
 
     return result;
@@ -770,26 +761,14 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
 
     // VK_NV_low_latency2 allows a swapchain to be created with the low latency
     // mode already on via VkSwapchainLatencyCreateInfoNV.
-    auto was_low_latency_requested = true; // enable by default?
+    [[maybe_unused]] auto was_low_latency_requested =
+        true; // enable by default?
     if (const auto slci = find_next<VkSwapchainLatencyCreateInfoNV>(
             pCreateInfo, VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV);
         slci) {
 
         was_low_latency_requested = slci->latencyModeEnable;
     }
-
-    auto insertion = [&]() -> std::unique_ptr<SwapchainMonitor> {
-        if (layer_context.should_expose_reflex) {
-            return std::make_unique<ReflexSwapchainMonitor>(
-                *context, was_low_latency_requested);
-        }
-        return std::make_unique<AntiLagSwapchainMonitor>(
-            *context, was_low_latency_requested);
-    }();
-    const auto did_emplace = context->swapchain_monitors
-                                 .try_emplace(*pSwapchain, std::move(insertion))
-                                 .second;
-    assert(did_emplace);
 
     return VK_SUCCESS;
 }
@@ -798,9 +777,6 @@ static VKAPI_ATTR void VKAPI_CALL
 DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
                     const VkAllocationCallbacks* pAllocator) {
     const auto context = layer_context.get_context(device);
-
-    assert(context->swapchain_monitors.contains(swapchain));
-    context->swapchain_monitors.erase(swapchain);
 
     context->vtable.DestroySwapchainKHR(device, swapchain, pAllocator);
 }
@@ -815,7 +791,8 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     // but it's easy to do the inverse. AMD's extension piggybacks on NVIDIA's
     // more complicated implementation.
 
-    const auto present_delay = [&]() -> std::chrono::milliseconds {
+    [[maybe_unused]] const auto present_delay =
+        [&]() -> std::chrono::milliseconds {
         using namespace std::chrono;
         if (!pData->maxFPS) {
             return 0ms;
@@ -823,51 +800,19 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
         return duration_cast<milliseconds>(1s / pData->maxFPS);
     }();
 
-    context->update_params(std::nullopt, present_delay,
-                           (pData->mode == VK_ANTI_LAG_MODE_ON_AMD));
-
     if (!pData->pPresentationInfo ||
         pData->pPresentationInfo->stage != VK_ANTI_LAG_STAGE_INPUT_AMD) {
 
         return;
     }
-
-    // VK_AMD_anti_lag doesn't provide a swapchain, so we can't map it to
-    // a queue. Our previous implementation used the last queue that presented
-    // and made sure that at least that one completed. I think it's more robust
-    // to make sure they all complete.
-    for (auto& iter : context->swapchain_monitors) {
-
-        // All swapchains should be of type AntiLagSwapchainMonitor here.
-        const auto ptr =
-            dynamic_cast<AntiLagSwapchainMonitor*>(iter.second.get());
-        assert(ptr);
-
-        ptr->await_submissions();
-    }
 }
 
-VkResult LatencySleepNV(VkDevice device, VkSwapchainKHR swapchain,
+VkResult LatencySleepNV(VkDevice device,
+                        [[maybe_unused]] VkSwapchainKHR swapchain,
                         const VkLatencySleepInfoNV* pSleepInfo) {
 
     const auto context = layer_context.get_context(device);
     assert(pSleepInfo);
-
-    // We're associating an application-provided timeline semaphore + value with
-    // a swapchain that says 'signal me when we should move past input'.
-    auto swapchain_monitor_ptr = [&]() -> auto {
-        const auto iter = context->swapchain_monitors.find(swapchain);
-        assert(iter != std::end(context->swapchain_monitors));
-        const auto ptr =
-            dynamic_cast<ReflexSwapchainMonitor*>(iter->second.get());
-        assert(ptr);
-        return ptr;
-    }();
-
-    // Tell our swapchain monitor that if they want us to proceed they should
-    // signal this semaphore.
-    swapchain_monitor_ptr->notify_semaphore(pSleepInfo->signalSemaphore,
-                                            pSleepInfo->value);
 
     return VK_SUCCESS;
 }
@@ -880,23 +825,12 @@ void QueueNotifyOutOfBandNV(
     // Also I really have no idea why pQueueTypeInfo's VkOutOfBandQueueTypeNV
     // enum even exists (I guess we will find out later when nothing works).
     const auto context = layer_context.get_context(queue);
-
-    context->is_out_of_band = true;
 }
 
-VkResult SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
-                               const VkLatencySleepModeInfoNV* pSleepModeInfo) {
+VkResult SetLatencySleepModeNV(
+    VkDevice device, [[maybe_unused]] VkSwapchainKHR swapchain,
+    [[maybe_unused]] const VkLatencySleepModeInfoNV* pSleepModeInfo) {
     const auto context = layer_context.get_context(device);
-
-    if (pSleepModeInfo) {
-        context->update_params(
-            swapchain,
-            std::chrono::microseconds{pSleepModeInfo->minimumIntervalUs},
-            pSleepModeInfo->lowLatencyMode);
-    } else {
-        // If pSleepModeInfo is nullptr, it means no delay and no low latency.
-        context->update_params(swapchain, std::chrono::microseconds{0}, false);
-    }
 
     return VK_SUCCESS;
 }

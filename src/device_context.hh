@@ -1,7 +1,6 @@
 #ifndef DEVICE_CONTEXT_HH_
 #define DEVICE_CONTEXT_HH_
 
-#include <chrono>
 #include <memory>
 #include <unordered_map>
 
@@ -15,7 +14,6 @@
 #include "instance_context.hh"
 #include "physical_device_context.hh"
 #include "queue_context.hh"
-#include "swapchain_monitor.hh"
 
 namespace low_latency {
 
@@ -32,11 +30,7 @@ class DeviceContext final : public Context {
     const VkuDeviceDispatchTable vtable;
 
     std::unique_ptr<DeviceClock> clock;
-
     std::unordered_map<VkQueue, std::shared_ptr<QueueContext>> queues;
-
-    std::unordered_map<VkSwapchainKHR, std::unique_ptr<SwapchainMonitor>>
-        swapchain_monitors;
 
   public:
     DeviceContext(InstanceContext& parent_instance,
@@ -44,16 +38,6 @@ class DeviceContext final : public Context {
                   const VkDevice& device, const bool was_capability_requested,
                   VkuDeviceDispatchTable&& vtable);
     virtual ~DeviceContext();
-
-  public:
-    // Updates the settings associated with that swapchain. If no swapchain
-    // target is provided all swapchains are set to this value.
-    void update_params(const std::optional<VkSwapchainKHR> target,
-                       const std::chrono::microseconds& present_delay,
-                       const bool was_low_latency_requested);
-
-    void notify_present(const VkSwapchainKHR& swapchain,
-                        std::unique_ptr<QueueContext::Submissions> submissions);
 };
 
 }; // namespace low_latency
