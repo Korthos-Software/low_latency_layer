@@ -20,6 +20,7 @@
 #include "instance_context.hh"
 #include "layer_context.hh"
 #include "queue_context.hh"
+#include "strategies/anti_lag/device_strategy.hh"
 #include "timestamp_pool.hh"
 
 namespace low_latency {
@@ -307,7 +308,7 @@ GetDeviceQueue(VkDevice device, std::uint32_t queue_family_index,
     // insert a nullptr key, then it didn't already exist so we should
     // construct a new one.
     const auto key = layer_context.get_key(*queue);
-    const auto lock = std::scoped_lock{layer_context.mutex};
+    const auto layer_lock = std::scoped_lock{layer_context.mutex};
     const auto [it, inserted] = layer_context.contexts.try_emplace(key);
     if (inserted) {
         it->second = std::make_shared<QueueContext>(*context, *queue,
@@ -317,6 +318,7 @@ GetDeviceQueue(VkDevice device, std::uint32_t queue_family_index,
     // it->second should be QueueContext, also it might already be there.
     const auto ptr = std::dynamic_pointer_cast<QueueContext>(it->second);
     assert(ptr);
+    const auto device_lock = std::scoped_lock{context->mutex};
     context->queues.emplace(*queue, ptr);
 }
 
@@ -341,6 +343,7 @@ static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(
 
     const auto ptr = std::dynamic_pointer_cast<QueueContext>(it->second);
     assert(ptr);
+    const auto device_lock = std::scoped_lock{context->mutex};
     context->queues.emplace(*queue, ptr);
 }
 
@@ -400,9 +403,15 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
         [&](const auto& submit) {
             const auto head_handle = context->timestamp_pool->acquire();
             head_handle->write_command(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
-
             const auto tail_handle = context->timestamp_pool->acquire();
             tail_handle->write_command(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+
+            context->strategy->notify_submit(
+                submit, std::make_unique<Submission>(Submission{
+                            .start = head_handle,
+                            .end = tail_handle,
+                            .time = now,
+                        }));
 
             handles.emplace_back(head_handle);
             handles.emplace_back(tail_handle);
@@ -445,7 +454,7 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
     auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
-    [[maybe_unused]] const auto now = DeviceClock::now();
+    const auto now = DeviceClock::now();
 
     std::ranges::transform(
         std::span{submit_infos, submit_count}, std::back_inserter(next_submits),
@@ -454,6 +463,13 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
             head_handle->write_command(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
             const auto tail_handle = context->timestamp_pool->acquire();
             tail_handle->write_command(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+
+            context->strategy->notify_submit(
+                submit, std::make_unique<Submission>(Submission{
+                            .start = head_handle,
+                            .end = tail_handle,
+                            .time = now,
+                        }));
 
             handles.emplace_back(head_handle);
             handles.emplace_back(tail_handle);
@@ -786,25 +802,10 @@ AntiLagUpdateAMD(VkDevice device, const VkAntiLagDataAMD* pData) {
     const auto context = layer_context.get_context(device);
     assert(pData);
 
-    // AL2 is a synchronous while NVIDIA's low_latencty2 is asynchronous.
-    // It's difficult to model an asynchronous impl inside a synchronous impl,
-    // but it's easy to do the inverse. AMD's extension piggybacks on NVIDIA's
-    // more complicated implementation.
-
-    [[maybe_unused]] const auto present_delay =
-        [&]() -> std::chrono::milliseconds {
-        using namespace std::chrono;
-        if (!pData->maxFPS) {
-            return 0ms;
-        }
-        return duration_cast<milliseconds>(1s / pData->maxFPS);
-    }();
-
-    if (!pData->pPresentationInfo ||
-        pData->pPresentationInfo->stage != VK_ANTI_LAG_STAGE_INPUT_AMD) {
-
-        return;
-    }
+    const auto strategy =
+        dynamic_cast<AntiLagDeviceStrategy*>(context->strategy.get());
+    assert(strategy);
+    strategy->notify_update(*pData);
 }
 
 VkResult LatencySleepNV(VkDevice device,

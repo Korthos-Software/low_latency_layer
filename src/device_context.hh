@@ -2,6 +2,7 @@
 #define DEVICE_CONTEXT_HH_
 
 #include <memory>
+#include <shared_mutex>
 #include <unordered_map>
 
 #include <vulkan/utility/vk_dispatch_table.h>
@@ -22,17 +23,15 @@ class DeviceContext final : public Context {
   public:
     InstanceContext& instance;
     PhysicalDeviceContext& physical_device;
-
     // Whether or not we were asked to do NV_VK_LowLatency2 or VK_AMD_anti_lag
     // at the device level.
     const bool was_capability_requested;
-
     const VkDevice device;
     const VkuDeviceDispatchTable vtable;
 
+    std::shared_mutex mutex;
     std::unique_ptr<DeviceClock> clock;
     std::unordered_map<VkQueue, std::shared_ptr<QueueContext>> queues;
-
     std::unique_ptr<DeviceStrategy> strategy;
 
   public:
