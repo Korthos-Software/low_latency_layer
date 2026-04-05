@@ -67,11 +67,10 @@ void ReflexSwapchainMonitor::do_monitor(const std::stop_token stoken) {
             break;
         }
 
-        // Grab the most recent semaphore we want to signal off the queue and
-        // clear it.
+        // Pop the oldest semaphore we want to signal off the queue.
         const auto semaphore_submission =
-            std::move(this->semaphore_submissions.back());
-        this->semaphore_submissions.clear();
+            std::move(this->semaphore_submissions.front());
+        this->semaphore_submissions.pop_front();
 
         // If we're stopping, signal the semaphore and don't worry about work
         // actually completing.
@@ -89,10 +88,13 @@ void ReflexSwapchainMonitor::do_monitor(const std::stop_token stoken) {
 
 void ReflexSwapchainMonitor::notify_semaphore(
     const VkSemaphore& timeline_semaphore, const std::uint64_t& value) {
+
     auto lock = std::unique_lock{this->mutex};
 
     const auto wakeup_semaphore = WakeupSemaphore{
         .timeline_semaphore = timeline_semaphore, .value = value};
+
+    // Signal immediately if reflex is off or it's a no-op submit.
     if (!this->was_low_latency_requested ||
         this->in_flight_submissions.empty()) {
 
@@ -100,6 +102,7 @@ void ReflexSwapchainMonitor::notify_semaphore(
         return;
     }
 
+    // Signal immediately if our outstanding work has already completed.
     if (this->in_flight_submissions.back()->has_completed()) {
         this->in_flight_submissions.clear();
         wakeup_semaphore.signal(this->device);
