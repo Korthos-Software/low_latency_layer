@@ -22,6 +22,10 @@ target_link_libraries(${LIBRARY_NAME}
     ${Vulkan_LIBRARIES}
 )
 
+target_include_directories(${LIBRARY_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
 include(GNUInstallDirs)
 # Prefix an absolute directory to our layer's json so the loader knows where the shared library is.
 configure_file(

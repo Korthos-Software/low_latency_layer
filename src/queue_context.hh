@@ -3,6 +3,7 @@
 
 #include "context.hh"
 #include "device_clock.hh"
+#include "strategies/queue_strategy.hh"
 #include "timestamp_pool.hh"
 
 #include <vulkan/utility/vk_dispatch_table.h>
@@ -41,6 +42,8 @@ class QueueContext final : public Context {
     const std::unique_ptr<CommandPoolOwner> command_pool;
 
     std::unique_ptr<TimestampPool> timestamp_pool;
+
+    std::unique_ptr<QueueStrategy> strategy;
 
   public:
     QueueContext(DeviceContext& device_context, const VkQueue& queue,

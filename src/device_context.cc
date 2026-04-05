@@ -1,5 +1,9 @@
 #include "device_context.hh"
 
+#include "layer_context.hh"
+#include "strategies/anti_lag/device_strategy.hh"
+#include "strategies/low_latency2/device_strategy.hh"
+
 #include <utility>
 #include <vulkan/vulkan_core.h>
 
@@ -15,9 +19,17 @@ DeviceContext::DeviceContext(InstanceContext& parent_instance,
       vtable(std::move(vtable)) {
 
     // Only create our clock if we were asked to do anything.
-    if (this->was_capability_requested) {
-        this->clock = std::make_unique<DeviceClock>(*this);
+    if (!this->was_capability_requested) {
+        return;
     }
+
+    this->clock = std::make_unique<DeviceClock>(*this);
+    this->strategy = [&]() -> std::unique_ptr<DeviceStrategy> {
+        if (parent_instance.layer.should_expose_reflex) {
+            return std::make_unique<LowLatency2DeviceStrategy>(*this);
+        }
+        return std::make_unique<AntiLagDeviceStrategy>(*this);
+    }();
 }
 
 DeviceContext::~DeviceContext() {

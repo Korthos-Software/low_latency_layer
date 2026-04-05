@@ -14,6 +14,7 @@
 #include "instance_context.hh"
 #include "physical_device_context.hh"
 #include "queue_context.hh"
+#include "strategies/device_strategy.hh"
 
 namespace low_latency {
 
@@ -31,6 +32,8 @@ class DeviceContext final : public Context {
 
     std::unique_ptr<DeviceClock> clock;
     std::unordered_map<VkQueue, std::shared_ptr<QueueContext>> queues;
+
+    std::unique_ptr<DeviceStrategy> strategy;
 
   public:
     DeviceContext(InstanceContext& parent_instance,
