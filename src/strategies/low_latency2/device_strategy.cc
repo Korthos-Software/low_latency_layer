@@ -30,7 +30,6 @@ void LowLatency2DeviceStrategy::notify_create_swapchain(
 
     const auto lock = std::scoped_lock{this->mutex};
     const auto iter = this->swapchain_monitors.emplace(swapchain, this->device);
-    assert(iter.second);
     iter.first->second.update_params(was_low_latency_requested,
                                      std::chrono::microseconds{0});
 }
@@ -50,7 +49,9 @@ void LowLatency2DeviceStrategy::notify_latency_sleep_mode(
     const auto lock = std::shared_lock{this->mutex};
 
     const auto iter = this->swapchain_monitors.find(swapchain);
-    assert(iter != std::end(this->swapchain_monitors));
+    if (iter == std::end(this->swapchain_monitors)) {
+        return;
+    }
 
     using namespace std::chrono;
     if (info) {
@@ -100,8 +101,9 @@ void LowLatency2DeviceStrategy::submit_swapchain_present_id(
     // Fail hard here, the swapchain must exist or something has gone wrong with
     // Vulkan bookkeeping.
     const auto iter = this->swapchain_monitors.find(swapchain);
-    assert(iter != std::end(this->swapchain_monitors));
-
+    if (iter == std::end(this->swapchain_monitors)) {
+        return;
+    }
     // Notify our monitor that this work has to be completed before they signal
     // whatever semaphore is currently sitting in it.
     iter->second.attach_work(std::move(work));
@@ -112,10 +114,10 @@ void LowLatency2DeviceStrategy::notify_latency_sleep_nv(
 
     const auto lock = std::scoped_lock{this->mutex};
 
-    // Again, fail hard here - something has gone terribly wrong.
     const auto iter = this->swapchain_monitors.find(swapchain);
-    assert(iter != std::end(this->swapchain_monitors));
-
+    if (iter == std::end(this->swapchain_monitors)) {
+        return;
+    }
     iter->second.notify_semaphore(info.signalSemaphore, info.value);
 }
 
