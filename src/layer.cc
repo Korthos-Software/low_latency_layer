@@ -636,16 +636,6 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceFeatures2(
 
     vtable.GetPhysicalDeviceFeatures2(physical_device, pFeatures);
 
-    // We're going to use this feature for both VK_AMD_anti_lag and
-    // VK_NV_low_latency2. It simplifies things a bit if we share a code path.
-    if (const auto pidf = find_next<VkPhysicalDevicePresentIdFeaturesKHR>(
-            pFeatures,
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR);
-        pidf) {
-
-        pidf->presentId = true;
-    }
-
     // Don't provide AntiLag if we're exposing reflex - VK_NV_low_latency2 uses
     // VkSurfaceCapabilities2KHR to determine if a surface is capable of reflex
     // instead of AMD's physical device switch found here.
@@ -840,6 +830,7 @@ void QueueNotifyOutOfBandNV(
 VkResult SetLatencySleepModeNV(
     VkDevice device, [[maybe_unused]] VkSwapchainKHR swapchain,
     [[maybe_unused]] const VkLatencySleepModeInfoNV* pSleepModeInfo) {
+
     const auto context = layer_context.get_context(device);
 
     const auto strategy =

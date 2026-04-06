@@ -53,7 +53,7 @@ QueueContext::QueueContext(DeviceContext& device, const VkQueue& queue,
     }();
 }
 
-QueueContext::~QueueContext() { this->timestamp_pool.reset(); }
+QueueContext::~QueueContext() {}
 
 bool QueueContext::should_inject_timestamps() const {
     const auto& physical_device = this->device.physical_device;
