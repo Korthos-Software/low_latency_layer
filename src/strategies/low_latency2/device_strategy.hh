@@ -6,6 +6,7 @@
 
 #include <shared_mutex>
 #include <unordered_map>
+#include <vulkan/vulkan_core.h>
 
 namespace low_latency {
 
@@ -27,6 +28,16 @@ class LowLatency2DeviceStrategy final : public DeviceStrategy {
                             const VkSwapchainCreateInfoKHR& info) override;
     virtual void
     notify_destroy_swapchain(const VkSwapchainKHR& swapchain) override;
+
+  public:
+    void submit_swapchain_present_id(const VkSwapchainKHR& swapchain,
+                                     const std::uint64_t& present_id);
+
+    void notify_latency_sleep_mode(const VkSwapchainKHR& swapchain,
+                                   const VkLatencySleepModeInfoNV* const info);
+
+    void notify_latency_sleep_nv(const VkSwapchainKHR& swapchain,
+                                 const VkLatencySleepInfoNV& info);
 };
 
 } // namespace low_latency

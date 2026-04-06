@@ -27,13 +27,14 @@ class SwapchainMonitor final {
         void signal(const DeviceContext& device) const;
     };
 
-    std::unique_ptr<std::deque<Submission>> pending_submissions{};
+    // An empty vector here represents our 'no work' state.
+    std::vector<std::deque<std::unique_ptr<Submission>>> pending_submissions{};
 
     // A pairing of semaphore -> submissions.
     // If the Submissions completes then signal the bundled semaphore.
     struct SemaphoreSubmissions {
         WakeupSemaphore wakeup_semaphore{};
-        std::unique_ptr<std::deque<Submission>> submissions{};
+        std::vector<std::deque<std::unique_ptr<Submission>>> submissions{};
     };
     std::optional<SemaphoreSubmissions> semaphore_submission{};
 
@@ -46,6 +47,8 @@ class SwapchainMonitor final {
 
     std::condition_variable_any cv{};
     std::jthread monitor_worker{};
+
+    std::optional<std::chrono::steady_clock::time_point> last_signal_time;
 
     void do_monitor(const std::stop_token stoken);
 
@@ -64,7 +67,8 @@ class SwapchainMonitor final {
     void notify_semaphore(const VkSemaphore& timeline_semaphore,
                           const std::uint64_t& value);
 
-    void attach_work(std::unique_ptr<std::deque<Submission>> submissions);
+    void attach_work(
+        std::vector<std::deque<std::unique_ptr<Submission>>> submissions);
 };
 
 } // namespace low_latency

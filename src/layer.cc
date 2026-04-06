@@ -21,6 +21,8 @@
 #include "layer_context.hh"
 #include "queue_context.hh"
 #include "strategies/anti_lag/device_strategy.hh"
+#include "strategies/low_latency2/device_strategy.hh"
+#include "strategies/low_latency2/queue_strategy.hh"
 #include "timestamp_pool.hh"
 
 namespace low_latency {
@@ -775,8 +777,10 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
         return result;
     }
 
-    assert(pCreateInfo);
-    context->strategy->notify_create_swapchain(*pSwapchain, *pCreateInfo);
+    if (context->was_capability_requested) {
+        assert(pCreateInfo);
+        context->strategy->notify_create_swapchain(*pSwapchain, *pCreateInfo);
+    }
 
     return VK_SUCCESS;
 }
@@ -788,7 +792,9 @@ DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
 
     context->vtable.DestroySwapchainKHR(device, swapchain, pAllocator);
 
-    context->strategy->notify_destroy_swapchain(swapchain);
+    if (context->was_capability_requested) {
+        context->strategy->notify_destroy_swapchain(swapchain);
+    }
 }
 
 static VKAPI_ATTR void VKAPI_CALL
@@ -809,6 +815,12 @@ VkResult LatencySleepNV(VkDevice device,
     const auto context = layer_context.get_context(device);
     assert(pSleepInfo);
 
+    // call device strategy notify semaphore, no problem :)
+    const auto strategy =
+        dynamic_cast<LowLatency2DeviceStrategy*>(context->strategy.get());
+    assert(strategy);
+    strategy->notify_latency_sleep_nv(swapchain, *pSleepInfo);
+
     return VK_SUCCESS;
 }
 
@@ -817,15 +829,24 @@ void QueueNotifyOutOfBandNV(
     [[maybe_unused]] const VkOutOfBandQueueTypeInfoNV* pQueueTypeInfo) {
 
     // Kind of interesting how you can't turn it back on once it's turned off.
-    // Also I really have no idea why pQueueTypeInfo's VkOutOfBandQueueTypeNV
-    // enum even exists (I guess we will find out later when nothing works).
     const auto context = layer_context.get_context(queue);
+
+    const auto strategy =
+        dynamic_cast<LowLatency2QueueStrategy*>(context->strategy.get());
+    assert(strategy);
+    strategy->notify_out_of_band();
 }
 
 VkResult SetLatencySleepModeNV(
     VkDevice device, [[maybe_unused]] VkSwapchainKHR swapchain,
     [[maybe_unused]] const VkLatencySleepModeInfoNV* pSleepModeInfo) {
     const auto context = layer_context.get_context(device);
+
+    const auto strategy =
+        dynamic_cast<LowLatency2DeviceStrategy*>(context->strategy.get());
+    assert(strategy);
+
+    strategy->notify_latency_sleep_mode(swapchain, pSleepModeInfo);
 
     return VK_SUCCESS;
 }

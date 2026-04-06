@@ -18,8 +18,7 @@ class PhysicalDeviceContext final : public Context {
     static constexpr auto required_extensions = {
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
         VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME,
-        VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME,
-        VK_KHR_PRESENT_ID_EXTENSION_NAME};
+        VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME};
 
   public:
     InstanceContext& instance;
