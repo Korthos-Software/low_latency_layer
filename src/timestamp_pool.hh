@@ -45,6 +45,8 @@ class TimestampPool final {
 
       private:
         static constexpr auto CHUNK_SIZE = 512u;
+        // Should be even because we take two each time in our handles.
+        static_assert(CHUNK_SIZE % 2 == 0);
 
       private:
         struct QueryPoolOwner final {
@@ -65,7 +67,7 @@ class TimestampPool final {
         };
 
         struct CommandBuffersOwner final {
-          private:
+          public:
             const QueueContext& queue_context;
             std::vector<VkCommandBuffer> command_buffers;
 
@@ -76,15 +78,12 @@ class TimestampPool final {
             CommandBuffersOwner operator=(const CommandBuffersOwner&) = delete;
             CommandBuffersOwner operator=(CommandBuffersOwner&&) = delete;
             ~CommandBuffersOwner();
-
-          public:
-            VkCommandBuffer operator[](const std::size_t& i);
         };
 
         std::unique_ptr<QueryPoolOwner> query_pool;
         std::unique_ptr<CommandBuffersOwner> command_buffers;
         // A set of indices which are currently availabe in this chunk.
-        std::unordered_set<std::uint64_t> free_indices;
+        std::unordered_set<std::uint32_t> free_indices;
 
       public:
         QueryChunk(const QueueContext& queue_context);
@@ -96,10 +95,11 @@ class TimestampPool final {
     };
 
   public:
-    // A handle represents a VkCommandBuffer and a query index. It can be used
-    // to attach timing information to submissions. Once the Handle destructs
-    // the query index will be returned to the parent pool - but crucially only
-    // when Vulkan is done with it.
+    // A handle represents a VkCommandBuffer and a query index.
+    // It represents represents and provides both a start and end command
+    // buffer, which can attach start/end timing information to submissions.
+    // Once the Handle destructs the query index will be returned to the parent
+    // pool - but crucially only when Vulkan is done with it.
     struct Handle final {
       private:
         friend class TimestampPool;
@@ -109,13 +109,11 @@ class TimestampPool final {
         QueryChunk& query_chunk;
 
       public:
-        const VkQueryPool query_pool;
-        const std::uint64_t query_index;
-        const VkCommandBuffer command_buffer;
+        const std::uint32_t query_index;
 
       public:
         Handle(TimestampPool& timestamp_pool, QueryChunk& query_chunk,
-               const std::uint64_t& query_index);
+               const std::uint32_t query_index);
         Handle(const Handle& handle) = delete;
         Handle operator=(const Handle& handle) = delete;
         Handle(Handle&&) = delete;
@@ -123,15 +121,17 @@ class TimestampPool final {
         ~Handle();
 
       public:
-        // Performs the Vulkan that sets up this command buffer for submission.
-        void write_command(const VkPipelineStageFlagBits2 bit) const;
+        const VkCommandBuffer& get_start_buffer() const;
+        const VkCommandBuffer& get_end_buffer() const;
+
+      private:
+        DeviceClock::time_point_t
+        await_time_impl(const std::uint32_t offset) const;
 
       public:
-        // Attempts to get the time - optional if it's not available yet.
-        std::optional<DeviceClock::time_point_t> get_time();
-
         // Waits until the time is available and returns it.
-        DeviceClock::time_point_t await_time();
+        DeviceClock::time_point_t await_start_time() const;
+        DeviceClock::time_point_t await_end_time() const;
     };
 
   private:

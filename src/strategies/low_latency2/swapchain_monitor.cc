@@ -59,7 +59,8 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
         lock.unlock();
         for (const auto& submission : semaphore_submission.submissions) {
             if (!submission.empty()) {
-                submission.back()->end->await_time();
+                const auto& last = submission.back();
+                last->handle->await_end_time();
             }
         }
 

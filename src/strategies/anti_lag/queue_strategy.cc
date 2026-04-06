@@ -56,7 +56,7 @@ void AntiLagQueueStrategy::await_complete() {
         return;
     }
     const auto& last = submissions.back();
-    last->end->await_time();
+    last->handle->await_end_time();
 }
 
 // Stub - AntiLag doesn't care about presents.

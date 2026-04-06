@@ -399,24 +399,20 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
 
     std::ranges::transform(
         submit_span, std::back_inserter(next_submits), [&](const auto& submit) {
-            const auto head_handle = context->timestamp_pool->acquire();
-            head_handle->write_command(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
-            const auto tail_handle = context->timestamp_pool->acquire();
-            tail_handle->write_command(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+            const auto handle = context->timestamp_pool->acquire();
 
             submissions.push_back(std::make_unique<Submission>(Submission{
-                .start = head_handle,
-                .end = tail_handle,
+                .handle = handle,
                 .time = now,
             }));
 
             next_cbs.emplace_back([&]() -> auto {
                 auto cbs = std::make_unique<cbs_t>();
-                cbs->push_back(head_handle->command_buffer);
+                cbs->push_back(handle->get_start_buffer());
                 std::ranges::copy(std::span{submit.pCommandBuffers,
                                             submit.commandBufferCount},
                                   std::back_inserter(*cbs));
-                cbs->push_back(tail_handle->command_buffer);
+                cbs->push_back(handle->get_end_buffer());
                 return cbs;
             }());
 
@@ -464,14 +460,10 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
 
     std::ranges::transform(
         submit_span, std::back_inserter(next_submits), [&](const auto& submit) {
-            const auto head_handle = context->timestamp_pool->acquire();
-            head_handle->write_command(VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT);
-            const auto tail_handle = context->timestamp_pool->acquire();
-            tail_handle->write_command(VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT);
+            const auto handle = context->timestamp_pool->acquire();
 
             submissions.push_back(std::make_unique<Submission>(Submission{
-                .start = head_handle,
-                .end = tail_handle,
+                .handle = handle,
                 .time = now,
             }));
 
@@ -479,14 +471,14 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
                 auto cbs = std::make_unique<cbs_t>();
                 cbs->push_back(VkCommandBufferSubmitInfo{
                     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-                    .commandBuffer = head_handle->command_buffer,
+                    .commandBuffer = handle->get_start_buffer(),
                 });
                 std::ranges::copy(std::span{submit.pCommandBufferInfos,
                                             submit.commandBufferInfoCount},
                                   std::back_inserter(*cbs));
                 cbs->push_back(VkCommandBufferSubmitInfo{
                     .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
-                    .commandBuffer = tail_handle->command_buffer,
+                    .commandBuffer = handle->get_end_buffer(),
                 });
                 return cbs;
             }());
