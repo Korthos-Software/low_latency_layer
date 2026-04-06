@@ -6,7 +6,8 @@
 
 namespace low_latency {
 
-struct Submission {
+class Submission {
+  public:
     std::shared_ptr<TimestampPool::Handle> start, end;
     DeviceClock::time_point_t time;
 };

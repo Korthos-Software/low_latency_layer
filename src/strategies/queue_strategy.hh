@@ -23,6 +23,7 @@ class QueueStrategy {
                                std::unique_ptr<Submission> submission) = 0;
     virtual void notify_submit(const VkSubmitInfo2& submit,
                                std::unique_ptr<Submission> submission) = 0;
+    virtual void notify_present(const VkPresentInfoKHR& present) = 0;
 };
 
 } // namespace low_latency

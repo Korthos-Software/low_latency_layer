@@ -59,4 +59,7 @@ void AntiLagQueueStrategy::await_complete() {
     last->end->await_time();
 }
 
+// Stub - AntiLag doesn't care about presents.
+void AntiLagQueueStrategy::notify_present(const VkPresentInfoKHR&) {}
+
 } // namespace low_latency

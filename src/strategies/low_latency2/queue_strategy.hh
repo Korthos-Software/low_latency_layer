@@ -17,6 +17,7 @@ class LowLatency2QueueStrategy final : public QueueStrategy {
                                std::unique_ptr<Submission> submission) override;
     virtual void notify_submit(const VkSubmitInfo2& submit,
                                std::unique_ptr<Submission> submission) override;
+    virtual void notify_present(const VkPresentInfoKHR& present) override;
 };
 
 } // namespace low_latency

@@ -54,8 +54,7 @@ void AntiLagDeviceStrategy::notify_update(const VkAntiLagDataAMD& data) {
         }
     }
 
-    // We might need to wait a little more time to meet our frame limit, if
-    // necessary.
+    // We might need to wait a little more time to meet our frame limit.
     using namespace std::chrono;
     if (this->delay != 0us && this->previous_input_release.has_value()) {
         std::this_thread::sleep_until(*this->previous_input_release +
@@ -79,5 +78,12 @@ bool AntiLagDeviceStrategy::should_track_submissions() {
 
     return true;
 }
+
+// Stub - anti_lag doesn't differentiate between swapchains.
+void AntiLagDeviceStrategy::notify_create_swapchain(
+    const VkSwapchainKHR&, const VkSwapchainCreateInfoKHR&) {}
+
+// Stub - again, AL doesn't care about swapchains.
+void AntiLagDeviceStrategy::notify_destroy_swapchain(const VkSwapchainKHR&) {}
 
 } // namespace low_latency

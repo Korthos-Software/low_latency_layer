@@ -527,16 +527,8 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
         return result;
     }
 
-    const auto pid = find_next<VkPresentIdKHR>(
-        present_info, VK_STRUCTURE_TYPE_PRESENT_ID_KHR);
-
-    for (auto i = std::uint32_t{0}; i < present_info->swapchainCount; ++i) {
-        [[maybe_unused]] const auto& swapchain = present_info->pSwapchains[i];
-
-        // For VK_AMD_anti_lag, providing a pPresentId isn't part of the spec.
-        // So we just set it to 0 if it isn't provided.
-        [[maybe_unused]] const auto present_id = pid ? pid->pPresentIds[i] : 0;
-    }
+    assert(present_info);
+    context->strategy->notify_present(*present_info);
 
     return result;
 }
@@ -559,7 +551,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL EnumerateDeviceExtensionProperties(
             physical_device, pLayerName, pPropertyCount, pProperties);
     }
 
-    // If we're exposing reflex we want to provide their extension instead.
+    // If we're exposing reflex we want to provide that extension instead.
     const auto extension_properties = [&]() -> VkExtensionProperties {
         if (context->instance.layer.should_expose_reflex) {
             return {.extensionName = VK_NV_LOW_LATENCY_2_EXTENSION_NAME,
@@ -783,16 +775,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(
         return result;
     }
 
-    // VK_NV_low_latency2 allows a swapchain to be created with the low latency
-    // mode already on via VkSwapchainLatencyCreateInfoNV.
-    [[maybe_unused]] auto was_low_latency_requested =
-        true; // enable by default?
-    if (const auto slci = find_next<VkSwapchainLatencyCreateInfoNV>(
-            pCreateInfo, VK_STRUCTURE_TYPE_SWAPCHAIN_LATENCY_CREATE_INFO_NV);
-        slci) {
-
-        was_low_latency_requested = slci->latencyModeEnable;
-    }
+    assert(pCreateInfo);
+    context->strategy->notify_create_swapchain(*pSwapchain, *pCreateInfo);
 
     return VK_SUCCESS;
 }
@@ -803,6 +787,8 @@ DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
     const auto context = layer_context.get_context(device);
 
     context->vtable.DestroySwapchainKHR(device, swapchain, pAllocator);
+
+    context->strategy->notify_destroy_swapchain(swapchain);
 }
 
 static VKAPI_ATTR void VKAPI_CALL

@@ -1,7 +1,7 @@
 #ifndef LAYER_CONTEXT_HH_
 #define LAYER_CONTEXT_HH_
 
-#include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 #include <vulkan/vulkan_core.h>
 
@@ -63,7 +63,7 @@ class LayerContext final : public Context {
     static constexpr auto NVIDIA_DEVICE_NAME = "NVIDIA GeForce RTX 5090";
 
   public:
-    std::mutex mutex;
+    std::shared_mutex mutex;
     std::unordered_map<void*, std::shared_ptr<Context>> contexts;
 
     bool should_expose_reflex = false;
@@ -82,7 +82,7 @@ class LayerContext final : public Context {
     std::shared_ptr<dispatch_context_t<DT>> get_context(const DT& dt) {
         const auto key = get_key(dt);
 
-        const auto lock = std::scoped_lock{this->mutex};
+        const auto lock = std::shared_lock{this->mutex};
         const auto it = this->contexts.find(key);
         assert(it != std::end(this->contexts));
 

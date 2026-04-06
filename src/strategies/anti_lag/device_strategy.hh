@@ -18,13 +18,20 @@ class AntiLagDeviceStrategy final : public DeviceStrategy {
     std::shared_mutex mutex{};
     // If this is nullopt don't track the submission.
     std::optional<std::uint64_t> frame_index{};
-    std::optional<std::chrono::steady_clock::time_point> previous_input_release;
+    std::optional<std::chrono::steady_clock::time_point> previous_input_release{};
     std::chrono::microseconds delay{};
     bool is_enabled{};
 
   public:
     AntiLagDeviceStrategy(DeviceContext& device);
     virtual ~AntiLagDeviceStrategy();
+
+  public:
+    virtual void
+    notify_create_swapchain(const VkSwapchainKHR& swapchain,
+                            const VkSwapchainCreateInfoKHR& info) override;
+    virtual void
+    notify_destroy_swapchain(const VkSwapchainKHR& swapchain) override;
 
   public:
     void notify_update(const VkAntiLagDataAMD& data);
