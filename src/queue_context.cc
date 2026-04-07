@@ -36,14 +36,14 @@ QueueContext::CommandPoolOwner::~CommandPoolOwner() {
 
 QueueContext::QueueContext(DeviceContext& device, const VkQueue& queue,
                            const std::uint32_t& queue_family_index)
-    : device(device), queue(queue), queue_family_index(queue_family_index),
-      command_pool(std::make_unique<CommandPoolOwner>(*this)) {
+    : device(device), queue(queue), queue_family_index(queue_family_index) {
 
     // Only construct things if we actually support our operations.
     if (!device.physical_device.supports_required_extensions) {
         return;
     }
 
+    this->command_pool = std::make_unique<CommandPoolOwner>(*this);
     this->timestamp_pool = std::make_unique<TimestampPool>(*this);
     this->strategy = [&]() -> std::unique_ptr<QueueStrategy> {
         if (device.instance.layer.should_expose_reflex) {
