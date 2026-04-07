@@ -53,12 +53,6 @@ static const T* find_link(const void* const head,
     return nullptr;
 }
 
-template <typename T> std::uint64_t extract_present_id(const T& submit) {
-    const auto lspi = find_next<VkLatencySubmissionPresentIdNV>(
-        &submit, VK_STRUCTURE_TYPE_LATENCY_SUBMISSION_PRESENT_ID_NV);
-    return lspi ? lspi->presentID : 0;
-}
-
 } // namespace low_latency
 
 #endif

@@ -63,11 +63,11 @@ class LayerContext final : public Context {
     static constexpr auto NVIDIA_DEVICE_NAME = "NVIDIA GeForce RTX 5090";
 
   public:
+    const bool should_expose_reflex = false;
+    const bool should_spoof_nvidia = false;
+
     std::shared_mutex mutex;
     std::unordered_map<void*, std::shared_ptr<Context>> contexts;
-
-    bool should_expose_reflex = false;
-    bool should_spoof_nvidia = false;
 
   public:
     LayerContext();

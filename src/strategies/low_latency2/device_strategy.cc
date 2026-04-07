@@ -97,9 +97,6 @@ void LowLatency2DeviceStrategy::submit_swapchain_present_id(
     }();
 
     const auto lock = std::scoped_lock{this->mutex};
-
-    // Fail hard here, the swapchain must exist or something has gone wrong with
-    // Vulkan bookkeeping.
     const auto iter = this->swapchain_monitors.find(swapchain);
     if (iter == std::end(this->swapchain_monitors)) {
         return;
