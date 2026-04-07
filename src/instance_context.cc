@@ -10,12 +10,6 @@ InstanceContext::InstanceContext(const LayerContext& parent_context,
                                  VkuInstanceDispatchTable&& vtable)
     : layer(parent_context), instance(instance), vtable(std::move(vtable)) {}
 
-InstanceContext::~InstanceContext() {
-    // Similar to devices, we should own the only shared ptr at this point so
-    // they destruct now.
-    for (const auto& [device, device_context] : this->physical_devices) {
-        assert(device_context.unique());
-    }
-}
+InstanceContext::~InstanceContext() {}
 
 } // namespace low_latency

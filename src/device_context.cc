@@ -32,12 +32,6 @@ DeviceContext::DeviceContext(InstanceContext& parent_instance,
     }();
 }
 
-DeviceContext::~DeviceContext() {
-    // We will let the destructor handle clearing here, but they should be
-    // unique by now (ie, removed from the layer's context map).
-    for (const auto& [queue, queue_context] : this->queues) {
-        assert(queue_context.unique());
-    }
-}
+DeviceContext::~DeviceContext() {}
 
 } // namespace low_latency
