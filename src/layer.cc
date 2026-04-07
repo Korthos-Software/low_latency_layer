@@ -774,11 +774,11 @@ DestroySwapchainKHR(VkDevice device, VkSwapchainKHR swapchain,
                     const VkAllocationCallbacks* pAllocator) {
     const auto context = layer_context.get_context(device);
 
-    context->vtable.DestroySwapchainKHR(device, swapchain, pAllocator);
-
     if (context->was_capability_requested) {
         context->strategy->notify_destroy_swapchain(swapchain);
     }
+
+    context->vtable.DestroySwapchainKHR(device, swapchain, pAllocator);
 }
 
 static VKAPI_ATTR void VKAPI_CALL
