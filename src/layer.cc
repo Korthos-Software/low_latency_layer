@@ -967,6 +967,10 @@ LowLatency_GetInstanceProcAddr(VkInstance instance, const char* const pName) {
         return it->second;
     }
 
+    if (!instance) {
+        return nullptr;
+    }
+
     const auto context = low_latency::layer_context.get_context(instance);
     return context->vtable.GetInstanceProcAddr(instance, pName);
 }
