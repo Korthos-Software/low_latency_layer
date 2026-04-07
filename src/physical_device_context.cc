@@ -22,17 +22,24 @@ PhysicalDeviceContext::PhysicalDeviceContext(
         return std::make_unique<VkPhysicalDeviceProperties>(std::move(props));
     }();
 
+    // Check if we support Vulkan 1.1 by checking if this function exists. If we
+    // don't, the layer cannot work, so we set 'supports required extensions' to
+    // false and bail.
+    if (!vtable.GetPhysicalDeviceQueueFamilyProperties2KHR) {
+        this->supports_required_extensions = false;
+        return;
+    }
+
     this->queue_properties = [&]() {
         auto count = std::uint32_t{};
-        vtable.GetPhysicalDeviceQueueFamilyProperties2KHR(physical_device, &count,
-                                                       nullptr);
+        vtable.GetPhysicalDeviceQueueFamilyProperties2KHR(physical_device,
+                                                          &count, nullptr);
 
         auto result = std::vector<VkQueueFamilyProperties2>(
             count, VkQueueFamilyProperties2{
                        .sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2});
-        vtable.GetPhysicalDeviceQueueFamilyProperties2KHR(physical_device, &count,
-                                                       std::data(result));
-
+        vtable.GetPhysicalDeviceQueueFamilyProperties2KHR(
+            physical_device, &count, std::data(result));
         return std::make_unique<std::vector<VkQueueFamilyProperties2>>(
             std::move(result));
     }();
