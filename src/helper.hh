@@ -4,8 +4,6 @@
 #include <vulkan/vk_layer.h>
 #include <vulkan/vulkan.h>
 
-#include <cstdint>
-
 namespace low_latency {
 
 #define THROW_NOT_VKSUCCESS(x)                                                 \

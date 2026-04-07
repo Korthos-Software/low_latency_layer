@@ -80,7 +80,7 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
     INSTANCE_VTABLE_LOAD(GetInstanceProcAddr);
     INSTANCE_VTABLE_LOAD(CreateDevice);
     INSTANCE_VTABLE_LOAD(EnumerateDeviceExtensionProperties);
-    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceQueueFamilyProperties2);
+    INSTANCE_VTABLE_LOAD(GetPhysicalDeviceQueueFamilyProperties2KHR);
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceFeatures2);
     INSTANCE_VTABLE_LOAD(GetPhysicalDeviceSurfaceCapabilities2KHR);
 #undef INSTANCE_VTABLE_LOAD
@@ -99,28 +99,29 @@ static VKAPI_ATTR void VKAPI_CALL
 DestroyInstance(VkInstance instance, const VkAllocationCallbacks* allocator) {
     // These requires special care because multiple threads might create a race
     // condition by being given the same VkInstance dispatchable handle.
-    auto lock = std::unique_lock{layer_context.mutex};
+    const auto destroy_instance = [&]() {
+        const auto lock = std::scoped_lock{layer_context.mutex};
 
-    const auto key = layer_context.get_key(instance);
-    const auto iter = layer_context.contexts.find(key);
-    assert(iter != std::end(layer_context.contexts));
-    const auto context =
-        std::dynamic_pointer_cast<InstanceContext>(iter->second);
+        const auto key = layer_context.get_key(instance);
+        const auto iter = layer_context.contexts.find(key);
+        assert(iter != std::end(layer_context.contexts));
+        auto context = std::dynamic_pointer_cast<InstanceContext>(iter->second);
 
-    // Erase our physical devices owned by this instance from the global
-    // context.
-    for (const auto& [key, _] : context->physical_devices) {
-        assert(layer_context.contexts.contains(key));
-        layer_context.contexts.erase(key);
-    }
+        // Erase our physical devices owned by this instance from the global
+        // context.
+        for (const auto& [key, _] : context->physical_devices) {
+            assert(layer_context.contexts.contains(key));
+            layer_context.contexts.erase(key);
+        }
 
-    layer_context.contexts.erase(iter);
-    // Should be the last ptr now like DestroyDevice.
-    assert(context.unique());
+        // Should be the last context here, so when we leave scope its
+        // destructor is called.
+        layer_context.contexts.erase(iter);
+        assert(context.unique());
+        return context->vtable.DestroyInstance;
+    }();
 
-    // Unlock now to avoid deadlocks if something calls back into us.
-    lock.unlock();
-    context->vtable.DestroyInstance(instance, allocator);
+    destroy_instance(instance, allocator);
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL EnumeratePhysicalDevices(
@@ -268,28 +269,28 @@ static VKAPI_ATTR void VKAPI_CALL
 DestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator) {
     // Similarly to DestroyInstance, this needs to be done carefully to avoid a
     // race.
-    auto lock = std::unique_lock{layer_context.mutex};
+    const auto destroy_device = [&]() -> auto {
+        const auto lock = std::scoped_lock{layer_context.mutex};
 
-    const auto key = layer_context.get_key(device);
-    const auto iter = layer_context.contexts.find(key);
-    assert(iter != std::end(layer_context.contexts));
-    const auto context = dynamic_pointer_cast<DeviceContext>(iter->second);
+        const auto key = layer_context.get_key(device);
+        const auto iter = layer_context.contexts.find(key);
+        assert(iter != std::end(layer_context.contexts));
+        auto context = dynamic_pointer_cast<DeviceContext>(iter->second);
 
-    // Remove all owned queues from our global context pool.
-    for (const auto& [queue, _] : context->queues) {
-        const auto key = layer_context.get_key(queue);
-        assert(layer_context.contexts.contains(key));
-        layer_context.contexts.erase(key);
-    }
+        // Remove all owned queues from our global context pool.
+        for (const auto& [queue, _] : context->queues) {
+            const auto key = layer_context.get_key(queue);
+            assert(layer_context.contexts.contains(key));
+            layer_context.contexts.erase(key);
+        }
 
-    layer_context.contexts.erase(iter);
+        // Should be the last shared ptr now, similar to DestroyInstance.
+        layer_context.contexts.erase(iter);
+        assert(context.unique());
+        return context->vtable.DestroyDevice;
+    }();
 
-    // Should be the last shared ptr now, so its destructor can be called.
-    // The destructor should expect its owned queues to be unique as well.
-    assert(context.unique());
-
-    lock.unlock();
-    context->vtable.DestroyDevice(device, allocator);
+    destroy_device(device, allocator);
 }
 
 static VKAPI_ATTR void VKAPI_CALL

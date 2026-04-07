@@ -24,13 +24,13 @@ PhysicalDeviceContext::PhysicalDeviceContext(
 
     this->queue_properties = [&]() {
         auto count = std::uint32_t{};
-        vtable.GetPhysicalDeviceQueueFamilyProperties2(physical_device, &count,
+        vtable.GetPhysicalDeviceQueueFamilyProperties2KHR(physical_device, &count,
                                                        nullptr);
 
         auto result = std::vector<VkQueueFamilyProperties2>(
             count, VkQueueFamilyProperties2{
                        .sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2});
-        vtable.GetPhysicalDeviceQueueFamilyProperties2(physical_device, &count,
+        vtable.GetPhysicalDeviceQueueFamilyProperties2KHR(physical_device, &count,
                                                        std::data(result));
 
         return std::make_unique<std::vector<VkQueueFamilyProperties2>>(
