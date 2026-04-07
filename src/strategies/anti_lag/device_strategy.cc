@@ -15,7 +15,7 @@ AntiLagDeviceStrategy::AntiLagDeviceStrategy(DeviceContext& device)
 AntiLagDeviceStrategy::~AntiLagDeviceStrategy() {}
 
 void AntiLagDeviceStrategy::notify_update(const VkAntiLagDataAMD& data) {
-    const auto lock = std::scoped_lock{this->mutex};
+    auto lock = std::unique_lock{this->mutex};
 
     this->is_enabled = !(data.mode == VK_ANTI_LAG_MODE_OFF_AMD);
 
@@ -37,11 +37,14 @@ void AntiLagDeviceStrategy::notify_update(const VkAntiLagDataAMD& data) {
         this->frame_index.reset();
         return;
     }
-
     // If we're at the input stage, start marking submissions as relevant.
     this->frame_index.emplace(data.pPresentationInfo->frameIndex);
 
-    { // Input stage needs to wait for all queue submissions to complete.
+    lock.unlock();
+    // We need to collect all queue submission and wait on them in this thread.
+    // Input stage needs to wait for all queue submissions to complete.
+    const auto queue_frame_spans = [&]() -> auto {
+        auto queue_frame_spans = std::vector<std::unique_ptr<FrameSpan>>{};
         const auto device_lock = std::shared_lock{this->device.mutex};
         for (const auto& iter : this->device.queues) {
             const auto& queue = iter.second;
@@ -50,15 +53,30 @@ void AntiLagDeviceStrategy::notify_update(const VkAntiLagDataAMD& data) {
                 dynamic_cast<AntiLagQueueStrategy*>(queue->strategy.get());
             assert(strategy);
 
-            strategy->await_complete();
+            // Grab it from the queue, don't hold the lock.
+            const auto queue_lock = std::scoped_lock{strategy->mutex};
+            queue_frame_spans.emplace_back(std::move(strategy->frame_span));
+            strategy->frame_span.reset();
+        }
+        return queue_frame_spans;
+    }();
+
+    // Wait on them and relock the mutex.
+    for (const auto& frame_span : queue_frame_spans) {
+        if (frame_span) { // Can still be null here.
+            frame_span->await_completed();
         }
     }
+
+    lock.lock();
 
     // We might need to wait a little more time to meet our frame limit.
     using namespace std::chrono;
     if (this->delay != 0us && this->previous_input_release.has_value()) {
+        lock.unlock();
         std::this_thread::sleep_until(*this->previous_input_release +
                                       this->delay);
+        lock.lock();
     }
 
     this->previous_input_release = steady_clock::now();

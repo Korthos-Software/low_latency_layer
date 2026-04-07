@@ -35,32 +35,29 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
     for (;;) {
         auto lock = std::unique_lock{this->mutex};
         this->cv.wait(lock, stoken,
-                      [&]() { return this->semaphore_submission.has_value(); });
+                      [&]() { return this->semaphore_spans.has_value(); });
 
         // Stop only if we're stopped and we have nothing to signal.
-        if (stoken.stop_requested() &&
-            !this->semaphore_submission.has_value()) {
+        if (stoken.stop_requested() && !this->semaphore_spans.has_value()) {
             break;
         }
 
         // Grab the most recent semaphore. When work completes, signal it.
-        const auto semaphore_submission =
-            std::move(*this->semaphore_submission);
-        this->semaphore_submission.reset();
+        const auto semaphore_span = std::move(*this->semaphore_spans);
+        this->semaphore_spans.reset();
 
         // If we're stopping, signal the semaphore and don't worry about work
         // actually completing.
         if (stoken.stop_requested()) {
-            semaphore_submission.wakeup_semaphore.signal(this->device);
+            semaphore_span.wakeup_semaphore.signal(this->device);
             break;
         }
 
         // Unlock, wait for work to finish, lock again.
         lock.unlock();
-        for (const auto& submission : semaphore_submission.submissions) {
-            if (!submission.empty()) {
-                const auto& last = submission.back();
-                last->handle->await_end_time();
+        for (const auto& frame_span : semaphore_span.frame_spans) {
+            if (frame_span) {
+                frame_span->await_completed();
             }
         }
 
@@ -78,7 +75,7 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
         }
         lock.unlock();
 
-        semaphore_submission.wakeup_semaphore.signal(this->device);
+        semaphore_span.wakeup_semaphore.signal(this->device);
     }
 }
 
@@ -97,29 +94,29 @@ void SwapchainMonitor::notify_semaphore(const VkSemaphore& timeline_semaphore,
     }
 
     // Signal immediately if we have no outstanding work.
-    if (this->pending_submissions.empty()) {
+    if (this->pending_frame_spans.empty()) {
         wakeup_semaphore.signal(this->device);
         return;
     }
 
-    this->semaphore_submission.emplace(SemaphoreSubmissions{
+    this->semaphore_spans.emplace(SemaphoreSpans{
         .wakeup_semaphore = wakeup_semaphore,
-        .submissions = std::move(this->pending_submissions),
+        .frame_spans = std::move(this->pending_frame_spans),
     });
-    this->pending_submissions.clear();
+    this->pending_frame_spans.clear();
 
     lock.unlock();
     this->cv.notify_one();
 }
 
 void SwapchainMonitor::attach_work(
-    std::vector<std::deque<std::unique_ptr<Submission>>> submissions) {
+    std::vector<std::unique_ptr<FrameSpan>> frame_spans) {
 
     const auto lock = std::scoped_lock{this->mutex};
     if (!this->was_low_latency_requested) {
         return;
     }
-    this->pending_submissions = std::move(submissions);
+    this->pending_frame_spans = std::move(frame_spans);
 }
 
 } // namespace low_latency

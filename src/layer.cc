@@ -394,19 +394,14 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
     // pointers to our command buffer arrays - of which the position in memory
     // of can change on vector reallocation. So we use unique_ptrs here.
     auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
-    auto submissions = std::vector<std::unique_ptr<Submission>>{};
+    auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
-    const auto now = DeviceClock::now();
     const auto submit_span = std::span{submit_infos, submit_count};
 
     std::ranges::transform(
         submit_span, std::back_inserter(next_submits), [&](const auto& submit) {
             const auto handle = context->timestamp_pool->acquire();
-
-            submissions.push_back(std::make_unique<Submission>(Submission{
-                .handle = handle,
-                .time = now,
-            }));
+            handles.push_back(handle);
 
             next_cbs.emplace_back([&]() -> auto {
                 auto cbs = std::make_unique<cbs_t>();
@@ -431,10 +426,8 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
 
     // We have to notify after we submit - otherwise we have a race where we
     // wait for work that wasn't submitted.
-    for (auto&& [submit, submission] :
-         std::views::zip(submit_span, submissions)) {
-
-        context->strategy->notify_submit(submit, std::move(submission));
+    for (auto&& [submit, handle] : std::views::zip(submit_span, handles)) {
+        context->strategy->notify_submit(submit, std::move(handle));
     }
 
     return result;
@@ -455,19 +448,14 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
     using cbs_t = std::vector<VkCommandBufferSubmitInfo>;
     auto next_submits = std::vector<VkSubmitInfo2>{};
     auto next_cbs = std::vector<std::unique_ptr<cbs_t>>{};
-    auto submissions = std::vector<std::unique_ptr<Submission>>{};
+    auto handles = std::vector<std::shared_ptr<TimestampPool::Handle>>{};
 
-    const auto now = DeviceClock::now();
     const auto submit_span = std::span{submit_infos, submit_count};
 
     std::ranges::transform(
         submit_span, std::back_inserter(next_submits), [&](const auto& submit) {
             const auto handle = context->timestamp_pool->acquire();
-
-            submissions.push_back(std::make_unique<Submission>(Submission{
-                .handle = handle,
-                .time = now,
-            }));
+            handles.push_back(handle);
 
             next_cbs.emplace_back([&]() -> auto {
                 auto cbs = std::make_unique<cbs_t>();
@@ -496,10 +484,8 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
         queue, static_cast<std::uint32_t>(std::size(next_submits)),
         std::data(next_submits), fence);
 
-    for (auto&& [submit, submission] :
-         std::views::zip(submit_span, submissions)) {
-
-        context->strategy->notify_submit(submit, std::move(submission));
+    for (auto&& [submit, handle] : std::views::zip(submit_span, handles)) {
+        context->strategy->notify_submit(submit, std::move(handle));
     }
 
     return result;

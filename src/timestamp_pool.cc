@@ -164,7 +164,7 @@ void TimestampPool::do_reaper(const std::stop_token stoken) {
 
         // Allow more to go on the queue while we wait for it to finish.
         lock.unlock();
-        handle_ptr->await_end_time();
+        handle_ptr->await_end();
 
         // Lock our mutex, allow the queue to use it again and delete it.
         lock.lock();
@@ -185,7 +185,7 @@ const VkCommandBuffer& TimestampPool::Handle::get_end_buffer() const {
     return command_buffers[this->query_index + 1];
 }
 
-DeviceClock::time_point_t
+std::uint64_t
 TimestampPool::Handle::await_time_impl(const std::uint32_t offset) const {
 
     const auto& context = this->timestamp_pool.queue_context.device;
@@ -201,15 +201,11 @@ TimestampPool::Handle::await_time_impl(const std::uint32_t offset) const {
             VK_QUERY_RESULT_WAIT_BIT));
     assert(query_result[1]);
 
-    return context.clock->ticks_to_time(query_result[0]);
+    return query_result[0];
 }
 
-DeviceClock::time_point_t TimestampPool::Handle::await_start_time() const {
-    return this->await_time_impl(0);
-}
-DeviceClock::time_point_t TimestampPool::Handle::await_end_time() const {
-    return this->await_time_impl(1);
-}
+void TimestampPool::Handle::await_start() const { this->await_time_impl(0); }
+void TimestampPool::Handle::await_end() const { this->await_time_impl(1); }
 
 TimestampPool::~TimestampPool() {}
 

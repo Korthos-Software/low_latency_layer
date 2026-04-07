@@ -16,50 +16,48 @@ LowLatency2QueueStrategy::~LowLatency2QueueStrategy() {}
 template <typename T>
 static void notify_submit_impl(LowLatency2QueueStrategy& strategy,
                                const T& submit,
-                               std::unique_ptr<Submission> submission) {
+                               std::shared_ptr<TimestampPool::Handle> handle) {
 
     // It's actually not a requirement that we have this present id.
-    const auto lspi = find_next<VkLatencySubmissionPresentIdNV>(
-        &submit, VK_STRUCTURE_TYPE_LATENCY_SUBMISSION_PRESENT_ID_NV);
-    const auto present_id = lspi ? lspi->presentID : 0;
+    const auto present_id = [&]() -> std::uint64_t {
+        const auto lspi = find_next<VkLatencySubmissionPresentIdNV>(
+            &submit, VK_STRUCTURE_TYPE_LATENCY_SUBMISSION_PRESENT_ID_NV);
+        return lspi ? lspi->presentID : 0;
+    }();
 
     const auto lock = std::scoped_lock{strategy.mutex};
-    const auto [iter, inserted] =
-        strategy.present_id_submissions.try_emplace(present_id);
-    iter->second.push_back(std::move(submission));
-
-    // Remove stale submissions if we're presenting a lot to the same
-    // present_id. This doesn't affect anything because we're waiting on the
-    // last. It begs the question: should we should just store the last only?
-    if (std::size(iter->second) >=
-        LowLatency2QueueStrategy::MAX_TRACKED_OBJECTS) {
-
-        iter->second.pop_front();
+    const auto [iter, inserted] = strategy.frame_spans.try_emplace(present_id);
+    if (inserted) {
+        iter->second = std::make_unique<FrameSpan>(std::move(handle));
+    } else {
+        iter->second->update(std::move(handle));
     }
 
     // Add our present_id to our ring tracking if it's non-zero.
     if (inserted && present_id) {
-        strategy.present_id_ring.push_back(present_id);
+        strategy.stale_present_ids.push_back(present_id);
     }
 
     // Remove stale present_id's if they weren't presented to.
-    if (std::size(strategy.present_id_ring) >
-        LowLatency2QueueStrategy::MAX_TRACKED_OBJECTS) {
+    if (std::size(strategy.stale_present_ids) >
+        LowLatency2QueueStrategy::MAX_TRACKED_PRESENTS) {
 
-        const auto to_remove = strategy.present_id_ring.front();
-        strategy.present_id_ring.pop_front();
-        strategy.present_id_submissions.erase(to_remove);
+        const auto stale_present_id = strategy.stale_present_ids.front();
+        strategy.stale_present_ids.pop_front();
+        strategy.frame_spans.erase(stale_present_id);
     }
 }
 
 void LowLatency2QueueStrategy::notify_submit(
-    const VkSubmitInfo& submit, std::unique_ptr<Submission> submission) {
+    const VkSubmitInfo& submit,
+    std::shared_ptr<TimestampPool::Handle> submission) {
 
     notify_submit_impl(*this, submit, std::move(submission));
 }
 
 void LowLatency2QueueStrategy::notify_submit(
-    const VkSubmitInfo2& submit, std::unique_ptr<Submission> submission) {
+    const VkSubmitInfo2& submit,
+    std::shared_ptr<TimestampPool::Handle> submission) {
 
     notify_submit_impl(*this, submit, std::move(submission));
 }

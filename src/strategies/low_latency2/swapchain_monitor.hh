@@ -2,16 +2,15 @@
 #ifndef SWAPCHAIN_MONITOR_HH_
 #define SWAPCHAIN_MONITOR_HH_
 
+#include "frame_span.hh"
+
 #include <vulkan/vulkan.h>
 
 #include <chrono>
 #include <condition_variable>
-#include <deque>
 #include <memory>
 #include <mutex>
 #include <thread>
-
-#include "submission.hh"
 
 namespace low_latency {
 
@@ -28,15 +27,15 @@ class SwapchainMonitor final {
     };
 
     // An empty vector here represents our 'no work' state.
-    std::vector<std::deque<std::unique_ptr<Submission>>> pending_submissions{};
+    std::vector<std::unique_ptr<FrameSpan>> pending_frame_spans{};
 
     // A pairing of semaphore -> submissions.
     // If the Submissions completes then signal the bundled semaphore.
-    struct SemaphoreSubmissions {
+    struct SemaphoreSpans {
         WakeupSemaphore wakeup_semaphore{};
-        std::vector<std::deque<std::unique_ptr<Submission>>> submissions{};
+        std::vector<std::unique_ptr<FrameSpan>> frame_spans{};
     };
-    std::optional<SemaphoreSubmissions> semaphore_submission{};
+    std::optional<SemaphoreSpans> semaphore_spans{};
 
   protected:
     const DeviceContext& device;
@@ -67,8 +66,7 @@ class SwapchainMonitor final {
     void notify_semaphore(const VkSemaphore& timeline_semaphore,
                           const std::uint64_t& value);
 
-    void attach_work(
-        std::vector<std::deque<std::unique_ptr<Submission>>> submissions);
+    void attach_work(std::vector<std::unique_ptr<FrameSpan>> submissions);
 };
 
 } // namespace low_latency

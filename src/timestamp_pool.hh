@@ -14,8 +14,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include "device_clock.hh"
-
 namespace low_latency {
 
 class QueueContext;
@@ -125,13 +123,13 @@ class TimestampPool final {
         const VkCommandBuffer& get_end_buffer() const;
 
       private:
-        DeviceClock::time_point_t
-        await_time_impl(const std::uint32_t offset) const;
+        // Returns the device ticks. FIXME wrap device ticks.
+        std::uint64_t await_time_impl(const std::uint32_t offset) const;
 
       public:
-        // Waits until the time is available and returns it.
-        DeviceClock::time_point_t await_start_time() const;
-        DeviceClock::time_point_t await_end_time() const;
+        // Blocks until the time is available.
+        void await_start() const;
+        void await_end() const;
     };
 
   private:
