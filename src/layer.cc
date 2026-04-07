@@ -97,28 +97,30 @@ CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
 
 static VKAPI_ATTR void VKAPI_CALL
 DestroyInstance(VkInstance instance, const VkAllocationCallbacks* allocator) {
+    // These requires special care because multiple threads might create a race
+    // condition by being given the same VkInstance dispatchable handle.
+    auto lock = std::unique_lock{layer_context.mutex};
 
-    const auto destroy_instance_func = [&]() -> auto {
-        const auto context = layer_context.get_context(instance);
-        const auto lock = std::scoped_lock{layer_context.mutex};
+    const auto key = layer_context.get_key(instance);
+    const auto iter = layer_context.contexts.find(key);
+    assert(iter != std::end(layer_context.contexts));
+    const auto context =
+        std::dynamic_pointer_cast<InstanceContext>(iter->second);
 
-        // Erase our physical devices owned by this instance from the global
-        // context.
-        for (const auto& [key, _] : context->physical_devices) {
-            assert(layer_context.contexts.contains(key));
-            layer_context.contexts.erase(key);
-        }
-
-        const auto key = layer_context.get_key(instance);
+    // Erase our physical devices owned by this instance from the global
+    // context.
+    for (const auto& [key, _] : context->physical_devices) {
         assert(layer_context.contexts.contains(key));
         layer_context.contexts.erase(key);
+    }
 
-        // Should be the last ptr now like DestroyDevice.
-        assert(context.unique());
-        return context->vtable.DestroyInstance;
-    }();
+    layer_context.contexts.erase(iter);
+    // Should be the last ptr now like DestroyDevice.
+    assert(context.unique());
 
-    destroy_instance_func(instance, allocator);
+    // Unlock now to avoid deadlocks if something calls back into us.
+    lock.unlock();
+    context->vtable.DestroyInstance(instance, allocator);
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL EnumeratePhysicalDevices(
@@ -264,31 +266,30 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
 
 static VKAPI_ATTR void VKAPI_CALL
 DestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator) {
+    // Similarly to DestroyInstance, this needs to be done carefully to avoid a
+    // race.
+    auto lock = std::unique_lock{layer_context.mutex};
 
-    const auto destroy_device_func = [&]() -> auto {
-        const auto device_context = layer_context.get_context(device);
+    const auto key = layer_context.get_key(device);
+    const auto iter = layer_context.contexts.find(key);
+    assert(iter != std::end(layer_context.contexts));
+    const auto context = dynamic_pointer_cast<DeviceContext>(iter->second);
 
-        const auto func = device_context->vtable.DestroyDevice;
-        const auto lock = std::scoped_lock{layer_context.mutex};
-        // Remove all owned queues from our global context pool.
-        for (const auto& [queue, _] : device_context->queues) {
-            const auto key = layer_context.get_key(queue);
-            assert(layer_context.contexts.contains(key));
-            layer_context.contexts.erase(key);
-        }
-
-        const auto key = layer_context.get_key(device);
+    // Remove all owned queues from our global context pool.
+    for (const auto& [queue, _] : context->queues) {
+        const auto key = layer_context.get_key(queue);
         assert(layer_context.contexts.contains(key));
         layer_context.contexts.erase(key);
+    }
 
-        // Should be the last shared ptr now, so its destructor can be called.
-        // The destructor should expect its owned queues to be unique as well.
-        assert(device_context.unique());
+    layer_context.contexts.erase(iter);
 
-        return func;
-    }();
+    // Should be the last shared ptr now, so its destructor can be called.
+    // The destructor should expect its owned queues to be unique as well.
+    assert(context.unique());
 
-    destroy_device_func(device, allocator);
+    lock.unlock();
+    context->vtable.DestroyDevice(device, allocator);
 }
 
 static VKAPI_ATTR void VKAPI_CALL
