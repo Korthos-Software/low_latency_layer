@@ -122,7 +122,7 @@ TimestampPool::Handle::Handle(TimestampPool& timestamp_pool,
 
     const auto cbbi = VkCommandBufferBeginInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-    };
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
 
     const auto& device_context = this->timestamp_pool.queue_context.device;
     const auto& vtable = device_context.vtable;
