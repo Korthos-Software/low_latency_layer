@@ -39,10 +39,9 @@ class QueueContext final : public Context {
       public:
         operator const VkCommandPool&() const { return this->command_pool; }
     };
-    const std::unique_ptr<CommandPoolOwner> command_pool;
 
+    std::unique_ptr<CommandPoolOwner> command_pool;
     std::unique_ptr<TimestampPool> timestamp_pool;
-
     std::unique_ptr<QueueStrategy> strategy;
 
   public:
