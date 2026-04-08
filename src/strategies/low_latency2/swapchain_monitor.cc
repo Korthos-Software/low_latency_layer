@@ -47,10 +47,10 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
         this->pending_signals.pop_front();
 
         // If we're stopping, signal the semaphore and don't worry about work
-        // actually completing.
+        // actually completing. But we MUST drain them, or we get a hang.
         if (stoken.stop_requested()) {
             pending_signal.wakeup_semaphore.signal(this->device);
-            break;
+            continue;
         }
 
         // Grab mutex protected present delay before we sleep - doesn't matter
