@@ -420,9 +420,13 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
             return next_submit;
         });
 
-    const auto result = vtable.QueueSubmit(
-        queue, static_cast<std::uint32_t>(std::size(next_submits)),
-        std::data(next_submits), fence);
+    if (const auto result = vtable.QueueSubmit(
+            queue, static_cast<std::uint32_t>(std::size(next_submits)),
+            std::data(next_submits), fence);
+        result != VK_SUCCESS) {
+
+        return result;
+    }
 
     // We have to notify after we submit - otherwise we have a race where we
     // wait for work that wasn't submitted.
@@ -430,7 +434,7 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
         context->strategy->notify_submit(submit, std::move(handle));
     }
 
-    return result;
+    return VK_SUCCESS;
 }
 
 // The logic for this function is identical to vkSubmitInfo.
@@ -480,15 +484,19 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
             return next_submit;
         });
 
-    const auto result = vtable.QueueSubmit2(
-        queue, static_cast<std::uint32_t>(std::size(next_submits)),
-        std::data(next_submits), fence);
+    if (const auto result = vtable.QueueSubmit2(
+            queue, static_cast<std::uint32_t>(std::size(next_submits)),
+            std::data(next_submits), fence);
+        result != VK_SUCCESS) {
+
+        return result;
+    }
 
     for (auto&& [submit, handle] : std::views::zip(submit_span, handles)) {
         context->strategy->notify_submit(submit, std::move(handle));
     }
 
-    return result;
+    return VK_SUCCESS;
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL
