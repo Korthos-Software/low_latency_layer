@@ -102,7 +102,7 @@ void SwapchainMonitor::notify_semaphore(const VkSemaphore& timeline_semaphore,
                                 return frame_span->has_completed();
                             })) {
         wakeup_semaphore.signal(this->device);
-        this->pending_signals.clear();
+        this->pending_frame_spans.clear();
         return;
     }
 
