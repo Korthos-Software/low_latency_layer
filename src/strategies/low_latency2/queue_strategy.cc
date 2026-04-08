@@ -29,13 +29,12 @@ static void notify_submit_impl(LowLatency2QueueStrategy& strategy,
     const auto [iter, inserted] = strategy.frame_spans.try_emplace(present_id);
     if (inserted) {
         iter->second = std::make_unique<FrameSpan>(std::move(handle));
+        // Add our present_id to our ring tracking if it's non-zero.
+        if (present_id) {
+            strategy.stale_present_ids.push_back(present_id);
+        }
     } else {
         iter->second->update(std::move(handle));
-    }
-
-    // Add our present_id to our ring tracking if it's non-zero.
-    if (inserted && present_id) {
-        strategy.stale_present_ids.push_back(present_id);
     }
 
     // Remove stale present_id's if they weren't presented to.

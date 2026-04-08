@@ -28,6 +28,8 @@ class FrameSpan {
     void update(std::shared_ptr<TimestampPool::Handle> handle);
 
   public:
+    // Check if GPU work has completed without hanging.
+    bool has_completed() const;
     // Wait for for GPU work to complete.
     void await_completed() const;
 };

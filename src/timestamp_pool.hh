@@ -10,6 +10,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <unordered_set>
 #include <vector>
@@ -130,6 +131,15 @@ class TimestampPool final {
         // Blocks until the time is available.
         void await_start() const;
         void await_end() const;
+
+      private:
+        std::optional<std::uint64_t>
+        has_time_impl(const std::uint32_t offset) const;
+
+      public:
+        // Checks if the time is available - doesn't block.
+        bool has_start() const;
+        bool has_end() const;
     };
 
   private:

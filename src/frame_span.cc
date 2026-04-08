@@ -21,4 +21,11 @@ void FrameSpan::await_completed() const {
     this->head_handle->await_end();
 }
 
+bool FrameSpan::has_completed() const {
+    if (this->tail_handle) {
+        return this->tail_handle->has_end();
+    }
+    return this->head_handle->has_end();
+}
+
 } // namespace low_latency

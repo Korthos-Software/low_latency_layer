@@ -16,6 +16,9 @@ class QueueContext;
 
 class LowLatency2QueueStrategy final : public QueueStrategy {
   public:
+    // It's possible that our tracking for present_ids grows without a limit if
+    // present isn't called. To guard against this, we store the last unique
+    // MAX_TRACKED_PRESENTS and use it to evict stale submissions.
     static constexpr auto MAX_TRACKED_PRESENTS = 50;
 
     // Mapping of present_id's to submissions. Grabbed later by the device

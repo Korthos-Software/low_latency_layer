@@ -26,16 +26,13 @@ class SwapchainMonitor final {
         void signal(const DeviceContext& device) const;
     };
 
-    // An empty vector here represents our 'no work' state.
     std::vector<std::unique_ptr<FrameSpan>> pending_frame_spans{};
 
-    // A pairing of semaphore -> submissions.
-    // If the Submissions completes then signal the bundled semaphore.
-    struct SemaphoreSpans {
+    struct PendingSignal {
         WakeupSemaphore wakeup_semaphore{};
         std::vector<std::unique_ptr<FrameSpan>> frame_spans{};
     };
-    std::optional<SemaphoreSpans> semaphore_spans{};
+    std::deque<PendingSignal> pending_signals{};
 
   protected:
     const DeviceContext& device;

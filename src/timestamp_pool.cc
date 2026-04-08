@@ -207,6 +207,39 @@ TimestampPool::Handle::await_time_impl(const std::uint32_t offset) const {
 void TimestampPool::Handle::await_start() const { this->await_time_impl(0); }
 void TimestampPool::Handle::await_end() const { this->await_time_impl(1); }
 
+std::optional<std::uint64_t>
+TimestampPool::Handle::has_time_impl(const std::uint32_t offset) const {
+
+    const auto& context = this->timestamp_pool.queue_context.device;
+    const auto& vtable = context.vtable;
+    const auto& query_pool = *this->query_chunk.query_pool;
+
+    auto query_result = std::array<std::uint64_t, 2>{};
+
+    const auto result = vtable.GetQueryPoolResults(
+        context.device, query_pool, this->query_index + offset, 1,
+        sizeof(query_result), &query_result, sizeof(query_result),
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+
+    if (result != VK_NOT_READY && result != VK_SUCCESS) {
+        throw result;
+    }
+
+    if (!query_result[1]) {
+        return std::nullopt;
+    }
+    return query_result[0];
+}
+
+// Checks if the time is available - doesn't block.
+bool TimestampPool::Handle::has_start() const {
+    return this->has_time_impl(0).has_value();
+}
+
+bool TimestampPool::Handle::has_end() const {
+    return this->has_time_impl(1).has_value();
+}
+
 TimestampPool::~TimestampPool() {}
 
 } // namespace low_latency
