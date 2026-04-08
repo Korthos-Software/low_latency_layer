@@ -19,7 +19,7 @@ void AntiLagDeviceStrategy::notify_update(const VkAntiLagDataAMD& data) {
 
     this->is_enabled = !(data.mode == VK_ANTI_LAG_MODE_OFF_AMD);
 
-    this->delay = [&]() -> std::chrono::microseconds {
+    this->input_delay = [&]() -> std::chrono::microseconds {
         using namespace std::chrono;
         if (!data.maxFPS) {
             return 0us;
@@ -40,7 +40,10 @@ void AntiLagDeviceStrategy::notify_update(const VkAntiLagDataAMD& data) {
     // If we're at the input stage, start marking submissions as relevant.
     this->frame_index.emplace(data.pPresentationInfo->frameIndex);
 
+    // Grab this before we unlock the mutex.
+    const auto delay = this->input_delay;
     lock.unlock();
+
     // We need to collect all queue submission and wait on them in this thread.
     // Input stage needs to wait for all queue submissions to complete.
     const auto queue_frame_spans = [&]() -> auto {
@@ -61,25 +64,20 @@ void AntiLagDeviceStrategy::notify_update(const VkAntiLagDataAMD& data) {
         return queue_frame_spans;
     }();
 
-    // Wait on them and relock the mutex.
+    // Wait on outstanding work to complete.
     for (const auto& frame_span : queue_frame_spans) {
         if (frame_span) { // Can still be null here.
             frame_span->await_completed();
         }
     }
 
-    lock.lock();
-
     // We might need to wait a little more time to meet our frame limit.
     using namespace std::chrono;
-    if (this->delay != 0us && this->previous_input_release.has_value()) {
-        lock.unlock();
-        std::this_thread::sleep_until(*this->previous_input_release +
-                                      this->delay);
-        lock.lock();
+    if (delay != 0us && this->previous_input_release.has_value()) {
+        const auto last = this->previous_input_release.get();
+        std::this_thread::sleep_until(last + delay);
     }
-
-    this->previous_input_release = steady_clock::now();
+    this->previous_input_release.set(steady_clock::now());
 }
 
 bool AntiLagDeviceStrategy::should_track_submissions() {

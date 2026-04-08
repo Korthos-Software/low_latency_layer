@@ -53,28 +53,26 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
             break;
         }
 
-        // Unlock, wait for work to finish, lock again.
+        // Grab mutex protected present delay before we sleep - doesn't matter
+        // if it's 'old'.
+        const auto delay = this->present_delay;
         lock.unlock();
+
+        // Wait for work to complete.
         for (const auto& frame_span : pending_signal.frame_spans) {
             if (frame_span) {
                 frame_span->await_completed();
             }
         }
-        lock.lock();
 
+        // Wait for possible need to delay the frame.
         using namespace std::chrono;
-        if (this->present_delay != 0us) {
-            const auto last_time = this->last_signal_time;
-            const auto delay = this->present_delay;
-            if (last_time.has_value()) {
-                lock.unlock();
-                std::this_thread::sleep_until(*last_time + delay);
-                lock.lock();
-            }
-            this->last_signal_time.emplace(steady_clock::now());
+        if (delay != 0us && this->last_signal_time.has_value()) {
+            const auto last = this->last_signal_time.get();
+            std::this_thread::sleep_until(last + delay);
         }
-        lock.unlock();
 
+        this->last_signal_time.set(std::chrono::steady_clock::now());
         pending_signal.wakeup_semaphore.signal(this->device);
     }
 }
@@ -93,8 +91,11 @@ void SwapchainMonitor::notify_semaphore(const VkSemaphore& timeline_semaphore,
         return;
     }
 
-    // Signal immediately if we have no outstanding work.
-    if (std::ranges::all_of(this->pending_frame_spans,
+    // Signal immediately if we don't need to worry about delaying the frame and
+    // we have no outstanding work.
+    using namespace std::chrono;
+    if (this->present_delay == 0us &&
+        std::ranges::all_of(this->pending_frame_spans,
                             [](const auto& frame_span) {
                                 if (!frame_span) {
                                     return true;

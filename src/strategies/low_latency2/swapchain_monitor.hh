@@ -2,8 +2,10 @@
 #ifndef SWAPCHAIN_MONITOR_HH_
 #define SWAPCHAIN_MONITOR_HH_
 
+#include "atomic_time_point.hh"
 #include "frame_span.hh"
 
+#include <atomic>
 #include <vulkan/vulkan.h>
 
 #include <chrono>
@@ -40,11 +42,10 @@ class SwapchainMonitor final {
     std::mutex mutex{};
     std::chrono::microseconds present_delay{};
     bool was_low_latency_requested{};
+    AtomicTimePoint last_signal_time{};
 
     std::condition_variable_any cv{};
     std::jthread monitor_worker{};
-
-    std::optional<std::chrono::steady_clock::time_point> last_signal_time;
 
     void do_monitor(const std::stop_token stoken);
 
