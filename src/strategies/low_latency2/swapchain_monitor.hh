@@ -5,7 +5,6 @@
 #include "atomic_time_point.hh"
 #include "frame_span.hh"
 
-#include <atomic>
 #include <vulkan/vulkan.h>
 
 #include <chrono>
