@@ -70,7 +70,7 @@ void LowLatency2DeviceStrategy::submit_swapchain_present_id(
     // monitor.
     auto work = [&]() -> std::vector<std::unique_ptr<FrameSpan>> {
         auto work = std::vector<std::unique_ptr<FrameSpan>>{};
-        const auto lock = std::scoped_lock{this->device.mutex};
+        const auto lock = std::shared_lock{this->device.mutex};
         for (const auto& queue_iter : this->device.queues) {
             const auto& queue = queue_iter.second;
 
