@@ -4,6 +4,7 @@
 
 #include "helper.hh"
 #include <mutex>
+#include <vulkan/vulkan_core.h>
 
 namespace low_latency {
 
@@ -113,6 +114,14 @@ void LowLatency2DeviceStrategy::notify_latency_sleep_nv(
 
     const auto iter = this->swapchain_monitors.find(swapchain);
     if (iter == std::end(this->swapchain_monitors)) {
+        // If we can't find the swapchain we have to signal the semaphore
+        // anyway. We must *never* discard these semaphores without signalling
+        // them first.
+        const auto ssi = VkSemaphoreSignalInfo{
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
+            .semaphore = info.signalSemaphore,
+            .value = info.value};
+        THROW_NOT_VKSUCCESS(device.vtable.SignalSemaphore(device.device, &ssi));
         return;
     }
     iter->second.notify_semaphore(info.signalSemaphore, info.value);

@@ -275,7 +275,7 @@ DestroyDevice(VkDevice device, const VkAllocationCallbacks* allocator) {
         const auto key = layer_context.get_key(device);
         const auto iter = layer_context.contexts.find(key);
         assert(iter != std::end(layer_context.contexts));
-        auto context = dynamic_pointer_cast<DeviceContext>(iter->second);
+        auto context = std::dynamic_pointer_cast<DeviceContext>(iter->second);
 
         // Remove all owned queues from our global context pool.
         for (const auto& [queue, _] : context->queues) {
