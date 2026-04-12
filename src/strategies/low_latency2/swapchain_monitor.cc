@@ -1,6 +1,5 @@
 #include "swapchain_monitor.hh"
 #include "device_context.hh"
-#include "helper.hh"
 
 #include <functional>
 
@@ -11,16 +10,6 @@ SwapchainMonitor::SwapchainMonitor(const DeviceContext& device)
       monitor_worker(std::bind_front(&SwapchainMonitor::do_monitor, this)) {}
 
 SwapchainMonitor::~SwapchainMonitor() {}
-
-void SwapchainMonitor::WakeupSemaphore::signal(
-    const DeviceContext& device) const {
-
-    const auto ssi =
-        VkSemaphoreSignalInfo{.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
-                              .semaphore = this->timeline_semaphore,
-                              .value = this->value};
-    THROW_NOT_VKSUCCESS(device.vtable.SignalSemaphore(device.device, &ssi));
-}
 
 void SwapchainMonitor::update_params(const bool was_low_latency_requested,
                                      const std::chrono::microseconds delay) {
@@ -49,7 +38,7 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
         // If we're stopping, signal the semaphore and don't worry about work
         // actually completing. But we MUST drain them, or we get a hang.
         if (stoken.stop_requested()) {
-            pending_signal.wakeup_semaphore.signal(this->device);
+            pending_signal.semaphore_signal.signal(this->device);
             continue;
         }
 
@@ -73,21 +62,18 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
         }
 
         this->last_signal_time.set(std::chrono::steady_clock::now());
-        pending_signal.wakeup_semaphore.signal(this->device);
+        pending_signal.semaphore_signal.signal(this->device);
     }
 }
 
-void SwapchainMonitor::notify_semaphore(const VkSemaphore& timeline_semaphore,
-                                        const std::uint64_t& value) {
+void SwapchainMonitor::notify_semaphore(
+    const SemaphoreSignal& semaphore_signal) {
 
     auto lock = std::unique_lock{this->mutex};
 
-    const auto wakeup_semaphore = WakeupSemaphore{
-        .timeline_semaphore = timeline_semaphore, .value = value};
-
     // Signal immediately if reflex is off or it's a no-op submit.
     if (!this->was_low_latency_requested) {
-        wakeup_semaphore.signal(this->device);
+        semaphore_signal.signal(this->device);
         return;
     }
 
@@ -103,13 +89,13 @@ void SwapchainMonitor::notify_semaphore(const VkSemaphore& timeline_semaphore,
                                 return frame_span->has_completed();
                             })) {
 
-        wakeup_semaphore.signal(this->device);
+        semaphore_signal.signal(this->device);
         this->pending_frame_spans.clear();
         return;
     }
 
     this->pending_signals.emplace_back(PendingSignal{
-        .wakeup_semaphore = wakeup_semaphore,
+        .semaphore_signal = semaphore_signal,
         .frame_spans = std::move(this->pending_frame_spans),
     });
     this->pending_frame_spans.clear();

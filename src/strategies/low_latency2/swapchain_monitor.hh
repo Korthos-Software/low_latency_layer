@@ -4,6 +4,7 @@
 
 #include "atomic_time_point.hh"
 #include "frame_span.hh"
+#include "semaphore_signal.hh"
 
 #include <vulkan/vulkan.h>
 
@@ -19,18 +20,10 @@ class DeviceContext;
 
 class SwapchainMonitor final {
   private:
-    struct WakeupSemaphore {
-        VkSemaphore timeline_semaphore{};
-        std::uint64_t value{};
-
-      public:
-        void signal(const DeviceContext& device) const;
-    };
-
     std::vector<std::unique_ptr<FrameSpan>> pending_frame_spans{};
 
     struct PendingSignal {
-        WakeupSemaphore wakeup_semaphore{};
+        SemaphoreSignal semaphore_signal;
         std::vector<std::unique_ptr<FrameSpan>> frame_spans{};
     };
     std::deque<PendingSignal> pending_signals{};
@@ -60,8 +53,7 @@ class SwapchainMonitor final {
     void update_params(const bool was_low_latency_requested,
                        const std::chrono::microseconds delay);
 
-    void notify_semaphore(const VkSemaphore& timeline_semaphore,
-                          const std::uint64_t& value);
+    void notify_semaphore(const SemaphoreSignal& semaphore_signal);
 
     void attach_work(std::vector<std::unique_ptr<FrameSpan>> submissions);
 };

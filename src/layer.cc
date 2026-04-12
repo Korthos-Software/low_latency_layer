@@ -251,6 +251,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     DEVICE_VTABLE_LOAD(SignalSemaphore);
     DEVICE_VTABLE_LOAD(CreateSwapchainKHR);
     DEVICE_VTABLE_LOAD(DestroySwapchainKHR);
+    DEVICE_VTABLE_LOAD(GetSemaphoreCounterValue);
 #undef DEVICE_VTABLE_LOAD
 
     const auto key = layer_context.get_key(*pDevice);
@@ -793,7 +794,6 @@ VkResult LatencySleepNV(VkDevice device,
     const auto context = layer_context.get_context(device);
     assert(pSleepInfo);
 
-    // call device strategy notify semaphore, no problem :)
     const auto strategy =
         dynamic_cast<LowLatency2DeviceStrategy*>(context->strategy.get());
     assert(strategy);
