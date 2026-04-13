@@ -45,6 +45,7 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
         // Grab mutex protected present delay before we sleep - doesn't matter
         // if it's 'old'.
         const auto delay = this->present_delay;
+        this->is_monitor_processing.store(true, std::memory_order_relaxed);
         lock.unlock();
 
         // Wait for work to complete.
@@ -62,6 +63,7 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
         }
 
         this->last_signal_time.set(std::chrono::steady_clock::now());
+        this->is_monitor_processing.store(false, std::memory_order_relaxed);
         pending_signal.semaphore_signal.signal(this->device);
     }
 }
@@ -81,6 +83,7 @@ void SwapchainMonitor::notify_semaphore(
     // we have no outstanding work.
     using namespace std::chrono;
     if (this->present_delay == 0us &&
+        !this->is_monitor_processing.load(std::memory_order_relaxed) &&
         std::ranges::all_of(this->pending_frame_spans,
                             [](const auto& frame_span) {
                                 if (!frame_span) {
