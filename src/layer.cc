@@ -514,10 +514,8 @@ vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
     const auto& vtable = context->device.vtable;
 
     const auto result = vtable.QueuePresentKHR(queue, present_info);
-    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-        return result;
-    }
 
+    // We must *ALWAYS* notify_present regardless of the error here.
     assert(present_info);
     context->strategy->notify_present(*present_info);
 
