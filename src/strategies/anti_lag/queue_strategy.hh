@@ -12,6 +12,9 @@ namespace low_latency {
 class QueueContext;
 
 class AntiLagQueueStrategy final : public QueueStrategy {
+  private:
+    const VkQueueFlags queue_flags; // Retrieved from our PhysicalDevice.
+
   public:
     std::mutex mutex;
     std::unique_ptr<FrameSpan> frame_span; // Null represents no work.
@@ -28,6 +31,9 @@ class AntiLagQueueStrategy final : public QueueStrategy {
     notify_submit(const VkSubmitInfo2& submit,
                   std::shared_ptr<TimestampPool::Handle> handle) override;
     virtual void notify_present(const VkPresentInfoKHR& present) override;
+
+  public:
+    bool should_track_submissions() const;
 };
 
 } // namespace low_latency
