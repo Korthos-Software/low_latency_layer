@@ -2,7 +2,7 @@
 
 A C++23 implicit Vulkan layer that reduces click-to-photon latency by implementing both AMD and NVIDIA's latency reduction technologies.
 
-By providing hardware-agnostic implementations of the `VK_NV_low_latency2` and `VK_AMD_anti_lag` device extensions, this layer brings Reflex and Anti-Lag capabilities to AMD and Intel GPUs. When paired with [dvxk-nvapi](https://github.com/jp7677/dxvk-nvapi/) to forward the relevant calls, it bypasses the need for official driver-level support.
+By providing hardware-agnostic implementations of the `VK_NV_low_latency2` and `VK_AMD_anti_lag` device extensions, this layer brings Reflex and Anti-Lag capabilities to AMD and Intel GPUs. When paired with [dxvk-nvapi](https://github.com/jp7677/dxvk-nvapi/) to forward the relevant calls, it bypasses the need for official driver-level support.
 
 The layer also eliminates a hardware support disparity as considerably more applications support NVIDIA's Reflex than AMD's Anti-Lag.
 
@@ -64,13 +64,22 @@ Benchmarks were conducted under worst-case conditions using high-end AMD hardwar
 
 We used Gentoo running KDE Plasma 6.6. Direct scanout was enabled throughout the testing process, verified as KWin’s 'Compositing' watermark disappeared when in fullscreen. Latency was measured using the NVIDIA Reflex Analyzer integrated into the ASUS PG248QP.
 
-## The Finals
+## THE FINALS
 ![tf](https://raw.githubusercontent.com/nJ3ahxac/files/main/low_latency_layer/the_finals.png)
 **Results**
 
 - We included comparisons against AMD's proprietary DX12 implementation of Anti-Lag 2 on Windows. The results suggest latency matches or beats native Windows numbers.
 - We can directly compare our implementation of Reflex and Anti-Lag technologies - they appear to perform identically as both are in line with AMD's proprietary reference implementation of Anti-Lag 2.
 - Mesa's anti-lag Vulkan layer was also included in testing. It appears to be a no-op in this case as it provides no latency benefit. The data suggests it may even increase latency slightly.
+
+## Counter-Strike 2
+![cs2](https://raw.githubusercontent.com/nJ3ahxac/files/main/low_latency_layer/cs2.png)
+**Results**
+
+- Unlike THE FINALS, where results were comparable, both technology implementations clearly beat the native Windows numbers in absolute terms.
+- Reflex and Anti-Lag 2 again perform identically, consistent with our previous findings.
+- CS2's `-vulkan` backend was also tested on Windows. It regresses baseline latency relative to the default backend, and AMD's Anti-Lag 2 does not recover this — it remains slower than Anti-Lag 2 on the default backend.
+- Mesa's Anti-Lag Vulkan layer again appears to be a no-op, matching our findings from THE FINALS.
 
 # License
 
