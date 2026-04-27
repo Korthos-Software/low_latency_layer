@@ -17,7 +17,7 @@ AntiLagDeviceStrategy::~AntiLagDeviceStrategy() {}
 void AntiLagDeviceStrategy::notify_update(const VkAntiLagDataAMD& data) {
     auto lock = std::unique_lock{this->mutex};
 
-    this->is_enabled = !(data.mode == VK_ANTI_LAG_MODE_OFF_AMD);
+    this->is_enabled = data.mode != VK_ANTI_LAG_MODE_OFF_AMD;
 
     this->input_delay = [&]() -> std::chrono::microseconds {
         using namespace std::chrono;
