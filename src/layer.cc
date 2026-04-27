@@ -833,8 +833,13 @@ void SetLatencyMarkerNV(VkDevice, VkSwapchainKHR,
     // STUB
 }
 
-void GetLatencyTimingsNV(VkDevice, VkSwapchainKHR, VkGetLatencyMarkerInfoNV*) {
-    // STUB
+void GetLatencyTimingsNV([[maybe_unused]] VkDevice device,
+                         [[maybe_unused]] VkSwapchainKHR swapchain,
+                         VkGetLatencyMarkerInfoNV* timings) {
+    // We don't do anything here but the caller still expects us to change
+    // timings->timingCount to the amount we wrote - so set it to zero.
+    assert(timings);
+    timings->timingCount = 0;
 }
 
 } // namespace low_latency
