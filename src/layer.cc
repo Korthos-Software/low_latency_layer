@@ -353,8 +353,8 @@ static VKAPI_ATTR void VKAPI_CALL GetDeviceQueue2(
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL
-vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
-              const VkSubmitInfo* submit_infos, VkFence fence) {
+QueueSubmit(VkQueue queue, std::uint32_t submit_count,
+            const VkSubmitInfo* submit_infos, VkFence fence) {
 
     const auto context = layer_context.get_context(queue);
     const auto& vtable = context->device.vtable;
@@ -440,8 +440,8 @@ vkQueueSubmit(VkQueue queue, std::uint32_t submit_count,
 
 // The logic for this function is identical to vkSubmitInfo.
 static VKAPI_ATTR VkResult VKAPI_CALL
-vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
-               const VkSubmitInfo2* submit_infos, VkFence fence) {
+QueueSubmit2(VkQueue queue, std::uint32_t submit_count,
+             const VkSubmitInfo2* submit_infos, VkFence fence) {
 
     const auto context = layer_context.get_context(queue);
     const auto& vtable = context->device.vtable;
@@ -501,14 +501,14 @@ vkQueueSubmit2(VkQueue queue, std::uint32_t submit_count,
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL
-vkQueueSubmit2KHR(VkQueue queue, std::uint32_t submit_count,
-                  const VkSubmitInfo2* submit_info, VkFence fence) {
-    // Just forward to low_latency::vkQueueSubmit2 here.
-    return low_latency::vkQueueSubmit2(queue, submit_count, submit_info, fence);
+QueueSubmit2KHR(VkQueue queue, std::uint32_t submit_count,
+                const VkSubmitInfo2* submit_info, VkFence fence) {
+    // Just forward to low_latency::QueueSubmit2 here.
+    return low_latency::QueueSubmit2(queue, submit_count, submit_info, fence);
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL
-vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
+QueuePresentKHR(VkQueue queue, const VkPresentInfoKHR* present_info) {
 
     const auto context = layer_context.get_context(queue);
     const auto& vtable = context->device.vtable;
@@ -917,11 +917,11 @@ static const auto device_functions = func_map_t{
     HOOK_ENTRY("vkGetDeviceQueue", low_latency::GetDeviceQueue),
     HOOK_ENTRY("vkGetDeviceQueue2", low_latency::GetDeviceQueue2),
 
-    HOOK_ENTRY("vkQueueSubmit", low_latency::vkQueueSubmit),
-    HOOK_ENTRY("vkQueueSubmit2", low_latency::vkQueueSubmit2),
-    HOOK_ENTRY("vkQueueSubmit2KHR", low_latency::vkQueueSubmit2KHR),
+    HOOK_ENTRY("vkQueueSubmit", low_latency::QueueSubmit),
+    HOOK_ENTRY("vkQueueSubmit2", low_latency::QueueSubmit2),
+    HOOK_ENTRY("vkQueueSubmit2KHR", low_latency::QueueSubmit2KHR),
 
-    HOOK_ENTRY("vkQueuePresentKHR", low_latency::vkQueuePresentKHR),
+    HOOK_ENTRY("vkQueuePresentKHR", low_latency::QueuePresentKHR),
 
     HOOK_ENTRY("vkAntiLagUpdateAMD", low_latency::AntiLagUpdateAMD),
 
