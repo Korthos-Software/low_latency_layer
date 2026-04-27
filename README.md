@@ -88,3 +88,7 @@ We used Gentoo running KDE Plasma 6.6. Direct scanout was enabled throughout the
 - Counter-Strike is a Vulkan Linux native game. It's the fastest of the three applications tested, yet we still see a strong improvement here. We sat at around 520fps for the duration of these tests.
 - Reflex appears to pull ahead slightly, but this is not statistically significant.
 - Both latency reduction technologies reduced total system latency by about 20%, or 1.5ms. The actual benefit is likely far greater and can be felt during actual gameplay.
+
+# License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
