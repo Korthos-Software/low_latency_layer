@@ -12,7 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 file(GLOB_RECURSE CXX_SOURCES src/*.cc)
 
-set(LIBRARY_NAME VkLayer_NJ3AHXAC_LowLatency)
+set(LIBRARY_NAME VkLayer_KORTHOS_LowLatency)
 add_library(${LIBRARY_NAME} SHARED
     ${CXX_SOURCES}
 )

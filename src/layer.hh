@@ -17,7 +17,7 @@ LowLatency_GetDeviceProcAddr(VkDevice device, const char* pName);
 
 namespace low_latency {
 
-static constexpr auto LAYER_NAME = "VK_LAYER_NJ3AHXAC_LowLatency";
+static constexpr auto LAYER_NAME = "VK_LAYER_KORTHOS_LowLatency";
 
 }
 

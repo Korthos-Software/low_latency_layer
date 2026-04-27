@@ -1,18 +1,18 @@
 {
     "file_format_version": "1.0.0",
     "layer": {
-        "name": "VK_LAYER_NJ3AHXAC_LowLatency",
+        "name": "VK_LAYER_KORTHOS_low_latency",
         "type": "GLOBAL",
-        "library_path": "@CMAKE_INSTALL_FULL_LIBDIR@/libVkLayer_NJ3AHXAC_LowLatency.so",
+        "library_path": "@CMAKE_INSTALL_FULL_LIBDIR@/libVkLayer_KORTHOS_LowLatency.so",
         "api_version": "1.3.0",
-        "implementation_version": "2",
+        "implementation_version": "3",
         "description": "Input latency reduction layer",
         "functions": {
             "vkGetInstanceProcAddr": "LowLatency_GetInstanceProcAddr",
             "vkGetDeviceProcAddr": "LowLatency_GetDeviceProcAddr"
         },
         "disable_environment": {
-            "DISABLE_LOW_LATENCY_LAYER": "1"
+            "DISABLE_LOW_LATENCY": "1"
         }
     }
 }
