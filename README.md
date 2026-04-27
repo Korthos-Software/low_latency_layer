@@ -6,7 +6,7 @@ By providing hardware-agnostic implementations of the `VK_NV_low_latency2` and `
 
 The layer also eliminates a hardware support disparity as considerably more applications support NVIDIA's Reflex than AMD's Anti-Lag.
 
-[Benchmarks are available here.](#testing-and-benchmarks)
+Benchmarks suggest the layer performs as well as or better than the proprietary Windows implementations on equivalent hardware. [More details and benchmarks are available here.](#testing-and-benchmarks)
 
 # Dependencies
 
@@ -19,7 +19,7 @@ The layer also eliminates a hardware support disparity as considerably more appl
 Clone this repo.
 
 ```
-    $ git clone https://git.nj3.xyz/low_latency_layer
+    $ git clone https://github.com/Korthos-Software/low_latency_layer.git
     $ cd low_latency_layer
 ```
 
@@ -55,39 +55,22 @@ The 'Boost' mode of Reflex is supported but is functionally identical to 'On' - 
 
 # Testing and Benchmarks
 
-Benchmarks were conducted under worst-case conditions using high-end AMD hardware. In systems with lower GPU overhead, these latency reductions may be even more pronounced.
+Benchmarks were conducted under worst-case conditions using high-end AMD hardware. For configurations that create higher GPU load, these latency reductions will be more pronounced. We preferred testing on low resolution and high refresh-rate monitors as they provide less variance and are more likely to reveal correctness issues against proprietary reference implementations.
 
 ## Setup and Methodology
 *   **GPU:** ASUS TUF Radeon RX 7900 XTX (flashed 550W Aqua Extreme BIOS) 1250MHz VRAM watercooled
 *   **CPU:** AMD Ryzen 7 9800X3D 102.0MHz eCLK -15 CO 2133MHz FCLK delid watercooled
-*   **Memory:** 64GB 2x32GB Hynix A-Die 6000MT/s CL28-36-36-30 GDM:off Nitro:1-2-0 (other timngs tuned)
+*   **Memory:** 64GB 2x32GB Hynix A-Die 6000MT/s CL28-36-36-30 GDM:off Nitro:1-2-0 (tuned)
 
 We used Gentoo running KDE Plasma 6.6. Direct scanout was enabled throughout the testing process, verified as KWin’s 'Compositing' watermark disappeared when in fullscreen. Latency was measured using the NVIDIA Reflex Analyzer integrated into the ASUS PG248QP.
 
-## Overwatch 2
-![ow2](http://git.nj3.xyz/files/plain/low_latency_layer/overwatch2.png?h=main)
-**Results**
-
-- This DX11 (DXVK) Proton game only supports Reflex - `PROTON_FORCE_NVAPI=1`, `LOW_LATENCY_LAYER_EXPOSE_REFLEX=1` and `LOW_LATENCY_LAYER_SPOOF_NVIDIA=1` were used to force Reflex support through the layer and Proton, regardless of the underlying hardware.
-- This was one of the only applications tested that allowed us to scale render resolution to 4k (we're avoiding gamescope for latency reasons). This resulted in a greater GPU backlog than would usually be present at 1080p. This test is probably more indicative of the latency improvements most setups would find as we're not pushing hundreds of FPS - we recorded around 160fps in this scenario.
-- Reflex provides a 16.4ms median latency improvement, which is around a 50% reduction in total system latency.
-
 ## The Finals
-![tf](http://git.nj3.xyz/files/plain/low_latency_layer/the_finals.png?h=main)
+![tf](https://raw.githubusercontent.com/nJ3ahxac/files/main/low_latency_layer/the_finals.png)
 **Results**
 
-- This DX12 (VKD3D) Proton game supports both Anti-Lag and Reflex. We can see a direct comparison of the two technologies here. We didn't expect such a large delta and the reason for this is under investigation.
-- Identical launch options to Overwatch 2 were required for Reflex.
-- We saw a reduction of around 6ms for Anti-Lag and 8ms for Reflex - approximately  a 33% and 40% latency reduction respectively from the baseline.
-- Average FPS was around 260 during testing.
-
-## Counter-Strike 2
-![cs2](http://git.nj3.xyz/files/plain/low_latency_layer/cs2.png?h=main)
-**Results**
-
-- Counter-Strike is a Vulkan Linux native game. It's the fastest of the three applications tested, yet we still see a strong improvement here. We sat at around 520fps for the duration of these tests.
-- Reflex appears to pull ahead slightly, but this is not statistically significant.
-- Both latency reduction technologies reduced total system latency by about 20%, or 1.5ms. The actual benefit is likely far greater and can be felt during actual gameplay.
+- We included comparisons against AMD's proprietary DX12 implementation of Anti-Lag 2 on Windows. The results suggest latency matches or beats native Windows numbers.
+- We can directly compare our implementation of Reflex and Anti-Lag technologies - they appear to perform identically as both are in line with AMD's proprietary reference implementation of Anti-Lag 2.
+- Mesa's anti-lag Vulkan layer was also included in testing. It appears to be a no-op in this case as it provides no latency benefit. The data suggests it may even increase latency slightly.
 
 # License
 
