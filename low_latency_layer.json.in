@@ -11,6 +11,9 @@
             "vkGetInstanceProcAddr": "LowLatency_GetInstanceProcAddr",
             "vkGetDeviceProcAddr": "LowLatency_GetDeviceProcAddr"
         },
+        "enable_environment": {
+            "LOW_LATENCY_LAYER": "1"
+        },
         "disable_environment": {
             "DISABLE_LOW_LATENCY_LAYER": "1"
         }
