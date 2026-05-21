@@ -1,16 +1,40 @@
 #include "delay_controller.hh"
+#include "submission_span.hh"
 
 #include <algorithm>
 
 namespace low_latency {
 
-DelayController::DelayController(const bool is_simulation_decoupled)
-    : is_simulation_decoupled(is_simulation_decoupled) {}
+DelayController::DelayController(const bool is_simulation_decoupled,
+                                 const bool should_strict_sync)
+    : is_simulation_decoupled(is_simulation_decoupled),
+      should_strict_sync(should_strict_sync) {}
 
 DelayController::~DelayController() {}
 
-void DelayController::delay(const DeviceClock::duration& min_delay) {
+void DelayController::delay(
+    const DeviceClock::duration& min_delay,
+    const std::span<const std::unique_ptr<SubmissionSpan>> work) {
+
     using namespace std::chrono;
+
+    // Wait for work to complete.
+    for (const auto& submission : work) {
+        if (!submission) {
+            continue;
+        }
+
+        // When a frame limit is requested, delays should be imposed by the
+        // input delay function (here) for optimal latency. However, some
+        // applications still inject their own delays, and this causes pacing
+        // issues. We mitigate this by only delaying until the start of the
+        // previous frame as opposed to delaying to the completion.
+        if (this->should_strict_sync || min_delay == 0ns) {
+            submission->await_completed();
+        } else {
+            submission->await_started();
+        }
+    }
 
     if (!this->previous_frame.has_value()) {
         this->previous_frame.emplace(frame_info{

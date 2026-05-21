@@ -6,7 +6,8 @@
 namespace low_latency {
 
 SwapchainMonitor::SwapchainMonitor(const DeviceContext& device)
-    : device(device), delay_controller(device.instance.is_simulation_decoupled),
+    : device(device), delay_controller(device.instance.is_simulation_decoupled,
+                                       device.instance.should_strict_sync),
       monitor_worker(std::bind_front(&SwapchainMonitor::do_monitor, this)) {}
 
 SwapchainMonitor::~SwapchainMonitor() {}
@@ -47,16 +48,9 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
         const auto delay = this->present_delay;
         lock.unlock();
 
-        // Wait for work to complete.
-        for (const auto& submission_span : pending_signal.submission_spans) {
-            if (submission_span) {
-                submission_span->await_completed();
-            }
-        }
-
         // Don't need to worry about locking for delay_controller as it's only
         // accessed here.
-        this->delay_controller.delay(delay);
+        this->delay_controller.delay(delay, pending_signal.submission_spans);
 
         pending_signal.semaphore_signal.signal(this->device);
     }

@@ -19,6 +19,7 @@ class InstanceContext final : public Context {
     const VkInstance instance{};
     const VkuInstanceDispatchTable vtable{};
     const bool is_simulation_decoupled{};
+    const bool should_strict_sync{};
 
     std::unordered_map<void*, std::shared_ptr<PhysicalDeviceContext>>
         physical_devices{};

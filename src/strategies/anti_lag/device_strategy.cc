@@ -9,7 +9,8 @@ namespace low_latency {
 
 AntiLagDeviceStrategy::AntiLagDeviceStrategy(DeviceContext& device)
     : DeviceStrategy(device),
-      delay_controller(device.instance.is_simulation_decoupled) {}
+      delay_controller(device.instance.is_simulation_decoupled,
+                       device.instance.should_strict_sync) {}
 
 AntiLagDeviceStrategy::~AntiLagDeviceStrategy() {}
 
@@ -60,14 +61,7 @@ void AntiLagDeviceStrategy::notify_update(const VkAntiLagDataAMD& data) {
         return work;
     }();
 
-    // Wait on outstanding work to complete.
-    for (const auto& submission_span : work) {
-        if (submission_span) { // Can still be null here.
-            submission_span->await_completed();
-        }
-    }
-
-    this->delay_controller.delay(min_delay);
+    this->delay_controller.delay(min_delay, work);
 }
 
 bool AntiLagDeviceStrategy::should_track_submissions() {

@@ -13,6 +13,10 @@ void SubmissionSpan::update(std::shared_ptr<TimestampPool::Handle> handle) {
     this->tail_handle = std::move(handle);
 }
 
+DeviceClock::time_point SubmissionSpan::await_started() const {
+    return this->head_handle->await_start();
+}
+
 std::pair<DeviceClock::time_point, DeviceClock::time_point>
 SubmissionSpan::await_completed() const {
     if (this->tail_handle) {

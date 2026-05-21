@@ -4,6 +4,7 @@
 #include "device_clock.hh"
 
 #include <optional>
+#include <span>
 
 namespace low_latency {
 
@@ -36,9 +37,12 @@ namespace low_latency {
 // the actual frametime should increase by that jitter amount. We can derive a
 // gradient and push that into an ewma to get a relatively clean signal of
 // 'are we there'.
+class SubmissionSpan;
+
 class DelayController {
   private:
     const bool is_simulation_decoupled{};
+    const bool should_strict_sync{};
 
     struct frame_info final {
         // The distance between the previous frame's release and when we entered
@@ -57,7 +61,8 @@ class DelayController {
     DeviceClock::duration drain{};
 
   public:
-    explicit DelayController(const bool is_simulation_decoupled);
+    explicit DelayController(const bool is_simulation_decoupled,
+                             const bool should_strict_sync);
     DelayController(const DelayController&) = delete;
     DelayController(DelayController&&) = delete;
     DelayController& operator=(const DelayController&) = delete;
@@ -65,7 +70,8 @@ class DelayController {
     ~DelayController();
 
   public:
-    void delay(const DeviceClock::duration& min_delay);
+    void delay(const DeviceClock::duration& min_delay,
+               const std::span<const std::unique_ptr<SubmissionSpan>> work);
 };
 
 }; // namespace low_latency

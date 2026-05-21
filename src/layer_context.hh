@@ -61,6 +61,15 @@ class LayerContext final : public Context {
     static constexpr auto FORCE_DECOUPLED_ENV =
         "LOW_LATENCY_LAYER_FORCE_DECOUPLED";
 
+    // Some applications (CS2) inject their own delays into the pipeline despite
+    // asking us to do waiting for them when an in-engine framelimit is active.
+    // This causes issues with frame pacing and requires mitigation where we
+    // kick off work at the start of the previous frame's work instead of the
+    // usual end. This eliminates queueing but isn't absolutely optimal for
+    // latency - but neither is using a frame limit in the first place.
+    static constexpr auto FORCE_STRICT_SYNC_ENV =
+        "LOW_LATENCY_LAYER_FORCE_STRICT_SYNC";
+
   public:
     // Constants for spoofing.
     static constexpr auto NVIDIA_VENDOR_ID = 0x10DE;
@@ -71,6 +80,7 @@ class LayerContext final : public Context {
     const bool should_expose_reflex{};
     const bool should_spoof_nvidia{};
     const bool should_force_decoupled{};
+    const bool should_force_strict_sync{};
 
     std::shared_mutex mutex{};
     std::unordered_map<void*, std::shared_ptr<Context>> contexts{};

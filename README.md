@@ -42,6 +42,7 @@ By default, the layer exposes the `VK_AMD_anti_lag` device extension. For Linux 
 | `LOW_LATENCY_LAYER_REFLEX` | Set to `1` to expose `VK_NV_low_latency2` instead of `VK_AMD_anti_lag`. |
 | `LOW_LATENCY_LAYER_FORCE_DECOUPLED` | Set to `1` to force mitigation of a decoupled simulation and render queue. This is disabled by default - only enabled for Marvel Rivals. Refer to `delay_controller.hh` for more details. Do not use outside of debugging - this will hurt latency in most applications. |
 | `LOW_LATENCY_LAYER_SPOOF_NVIDIA` | Set to `1` to report the device as an NVIDIA GPU to the application, regardless of actual hardware. Not recommended - prefer `DXVK_CONFIG="dxgi.hideAmdGpu = True"`, as this option is known to break Proton's FSR4 upgrade path. |
+| `LOW_LATENCY_LAYER_FORCE_STRICT_SYNC` | Set to `1` to force the input stage to wait for the previous frame's GPU work to finish, instead of just to start. This is enabled by default - only disabled for CS2 and Deadlock, which inject their own delays alongside an in-engine frame limit and collapse to half throughput when our wait stacks on top. Do not use outside of debugging - this will hurt throughput when an in-engine frame limit is active. |
 | `DISABLE_LOW_LATENCY_LAYER` | Expose to disable the layer. |
 
 

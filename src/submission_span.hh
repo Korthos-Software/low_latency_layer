@@ -33,6 +33,9 @@ class SubmissionSpan {
     // Check if GPU work has completed without blocking.
     bool has_completed() const;
 
+    // Wait for GPU work to start - returns the start time.
+    DeviceClock::time_point await_started() const;
+
     // Wait for GPU work to complete - returns the start and end time.
     std::pair<DeviceClock::time_point, DeviceClock::time_point>
     await_completed() const;
