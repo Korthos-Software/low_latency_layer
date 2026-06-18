@@ -1,0 +1,27 @@
+id: org.freedesktop.Platform.VulkanLayer.korthos-low-latency
+branch: "25.08"
+runtime: org.freedesktop.Platform
+runtime-version: "25.08"
+sdk: org.freedesktop.Sdk
+build-extension: true
+
+build-options:
+  prefix: /usr/lib/extensions/vulkan/korthos-low-latency
+
+modules:
+  - name: vulkan-utility-libraries
+    buildsystem: cmake
+    sources:
+      - type: git
+        url: https://github.com/KhronosGroup/Vulkan-Utility-Libraries.git
+        tag: vulkan-sdk-1.4.321.0
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+
+  - name: korthos-low-latency
+    buildsystem: cmake
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+    sources:
+      - type: dir
+        path: ../..

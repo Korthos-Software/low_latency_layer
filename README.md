@@ -36,6 +36,32 @@ Create an out-of-tree build directory (creatively we'll use 'build') and install
     $ sudo make install
 ```
 
+# Build for Flatpak from Source
+
+> ℹ️ **Information**: The layer is only compatible with flatpak runtime version 25.08.
+
+Clone this repo.
+
+```
+    $ git clone https://github.com/Korthos-Software/low_latency_layer.git
+    $ cd low_latency_layer
+```
+
+> ⚠️ **WARNING:** You need to have `flatpak-builder` installed on your system.
+
+System-wide installation :
+
+```
+    $ flatpak-builder --install builddir dist/flatpak/org.freedesktop.Platform.VulkanLayer.korthos-low-latency_25.08.yml
+```
+
+User-wide installation :
+
+```
+    $ flatpak-builder --user --install builddir dist/flatpak/org.freedesktop.Platform.VulkanLayer.korthos-low-latency_25.08.yml
+```
+
+
 # Usage and Configuration
 
 By default, the layer exposes the `VK_AMD_anti_lag` device extension. Provided the layer was enabled with `LOW_LATENCY_LAYER=1`, Linux native applications like *Counter-Strike 2* will work out-of-the-box, allowing you to toggle AMD's Anti-Lag in its menus. You can further customize the layer's behavior using the environment variables listed below.
