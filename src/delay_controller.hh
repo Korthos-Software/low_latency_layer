@@ -3,6 +3,7 @@
 
 #include "device_clock.hh"
 
+#include <mutex>
 #include <optional>
 
 namespace low_latency {
@@ -39,6 +40,7 @@ namespace low_latency {
 class DelayController {
   private:
     const bool is_simulation_decoupled{};
+    std::mutex mutex{};
 
     struct frame_info final {
         // The distance between the previous frame's release and when we entered
