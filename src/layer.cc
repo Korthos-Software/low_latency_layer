@@ -31,7 +31,7 @@ namespace low_latency {
 
 namespace {
 
-LayerContext layer_context;
+LayerContext& layer_context = *new LayerContext;
 
 } // namespace
 
