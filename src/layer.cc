@@ -286,7 +286,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(
     }();
 
     const auto create_device = reinterpret_cast<PFN_vkCreateDevice>(
-        gipa(VK_NULL_HANDLE, "vkCreateDevice"));
+        gipa(context->instance.instance, "vkCreateDevice"));
     if (!create_device) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
