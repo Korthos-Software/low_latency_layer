@@ -903,10 +903,17 @@ SetLatencySleepModeNV(VkDevice device, VkSwapchainKHR swapchain,
 static VKAPI_ATTR void VKAPI_CALL
 SetLatencyMarkerNV(VkDevice device, VkSwapchainKHR swapchain,
                    const VkSetLatencyMarkerInfoNV* info) noexcept {
+    const auto context = layer_context.get_context(device);
     if (!layer_context.should_expose_reflex) {
-        const auto context = layer_context.get_context(device);
         context->vtable.SetLatencyMarkerNV(device, swapchain, info);
         return;
+    }
+
+    if (info && layer_context.should_pace_framegen) {
+        const auto strategy =
+            dynamic_cast<LowLatency2DeviceStrategy*>(context->strategy.get());
+        assert(strategy);
+        strategy->framegen_pacer.notify_marker(info->presentID, info->marker);
     }
 }
 

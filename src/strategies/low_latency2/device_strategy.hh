@@ -1,6 +1,7 @@
 #ifndef STRATEGIES_LOW_LATENCY2_DEVICE_STRATEGY_HH_
 #define STRATEGIES_LOW_LATENCY2_DEVICE_STRATEGY_HH_
 
+#include "framegen_pacer.hh"
 #include "strategies/device_strategy.hh"
 #include "swapchain_monitor.hh"
 
@@ -16,6 +17,9 @@ class LowLatency2DeviceStrategy final : public DeviceStrategy {
   private:
     std::shared_mutex mutex{};
     std::unordered_map<VkSwapchainKHR, SwapchainMonitor> swapchain_monitors{};
+
+  public:
+    FramegenPacer framegen_pacer{};
 
   public:
     explicit LowLatency2DeviceStrategy(DeviceContext& device);

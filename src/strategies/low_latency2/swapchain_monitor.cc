@@ -1,12 +1,15 @@
 #include "swapchain_monitor.hh"
 #include "device_context.hh"
+#include "instance_context.hh"
+#include "layer_context.hh"
 
 #include <functional>
 
 namespace low_latency {
 
-SwapchainMonitor::SwapchainMonitor(const DeviceContext& device)
-    : device(device), delay_controller(device.instance.is_simulation_decoupled),
+SwapchainMonitor::SwapchainMonitor(const DeviceContext& device,
+                                   FramegenPacer& framegen_pacer)
+    : device(device), framegen_pacer(framegen_pacer), delay_controller(device.instance.is_simulation_decoupled),
       monitor_worker(std::bind_front(&SwapchainMonitor::do_monitor, this)) {}
 
 SwapchainMonitor::~SwapchainMonitor() {}
@@ -54,6 +57,10 @@ void SwapchainMonitor::do_monitor(const std::stop_token stoken) {
             }
         }
 
+        if (this->device.instance.layer.should_pace_framegen) {
+            this->framegen_pacer.hold(pending_signal.sleep_called);
+        }
+
         // Don't need to worry about locking for delay_controller as it's only
         // accessed here.
         this->delay_controller.delay(delay);
@@ -76,6 +83,7 @@ void SwapchainMonitor::notify_semaphore(
     this->pending_signals.emplace_back(PendingSignal{
         .semaphore_signal = semaphore_signal,
         .submission_spans = std::move(this->pending_submission_spans),
+        .sleep_called = DeviceClock::now(),
     });
     this->pending_submission_spans.clear();
 

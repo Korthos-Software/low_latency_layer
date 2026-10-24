@@ -45,6 +45,11 @@ class LowLatency2QueueStrategy final : public QueueStrategy {
 
   public:
     void notify_out_of_band();
+
+    // Hands frame-generation submissions to the device's FramegenPacer.
+    void notify_out_of_band_submit(
+        const std::uint64_t present_id,
+        const std::shared_ptr<TimestampPool::Handle>& handle);
 };
 
 } // namespace low_latency

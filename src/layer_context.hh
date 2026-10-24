@@ -61,6 +61,10 @@ class LayerContext final : public Context {
     static constexpr auto FORCE_DECOUPLED_ENV =
         "LOW_LATENCY_LAYER_FORCE_DECOUPLED";
 
+    // Pace the simulation against frame generation (framegen_pacer.hh).
+    static constexpr auto FRAMEGEN_PACING_ENV =
+        "LOW_LATENCY_LAYER_FRAMEGEN_PACING";
+
   public:
     // Constants for spoofing.
     static constexpr auto NVIDIA_VENDOR_ID = 0x10DE;
@@ -71,6 +75,7 @@ class LayerContext final : public Context {
     const bool should_expose_reflex{};
     const bool should_spoof_nvidia{};
     const bool should_force_decoupled{};
+    const bool should_pace_framegen{};
 
     std::shared_mutex mutex{};
     std::unordered_map<void*, std::shared_ptr<Context>> contexts{};

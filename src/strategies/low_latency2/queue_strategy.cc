@@ -1,6 +1,8 @@
 #include "queue_strategy.hh"
 #include "device_context.hh"
 #include "device_strategy.hh"
+#include "instance_context.hh"
+#include "layer_context.hh"
 #include "queue_context.hh"
 
 #include <vulkan/utility/vk_struct_helper.hpp>
@@ -25,6 +27,11 @@ static void notify_submit_impl(LowLatency2QueueStrategy& strategy,
                 submit.pNext);
         return lspi ? lspi->presentID : 0;
     }();
+
+    if (handle && present_id &&
+        strategy.is_out_of_band.load(std::memory_order_relaxed)) {
+        strategy.notify_out_of_band_submit(present_id, handle);
+    }
 
     const auto lock = std::scoped_lock{strategy.mutex};
     const auto [iter, inserted] =
@@ -81,6 +88,20 @@ void LowLatency2QueueStrategy::notify_present(const VkPresentInfoKHR& present) {
         }();
         device_strategy->submit_swapchain_present_id(swapchain, present_id);
     }
+}
+
+void LowLatency2QueueStrategy::notify_out_of_band_submit(
+    const std::uint64_t present_id,
+    const std::shared_ptr<TimestampPool::Handle>& handle) {
+
+    if (!this->queue.device.instance.layer.should_pace_framegen) {
+        return;
+    }
+    const auto device_strategy = dynamic_cast<LowLatency2DeviceStrategy*>(
+        this->queue.device.strategy.get());
+    assert(device_strategy);
+    device_strategy->framegen_pacer.notify_out_of_band_submit(present_id,
+                                                              handle);
 }
 
 void LowLatency2QueueStrategy::notify_out_of_band() {

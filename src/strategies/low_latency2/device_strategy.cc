@@ -32,7 +32,8 @@ void LowLatency2DeviceStrategy::notify_create_swapchain(
     }
 
     const auto lock = std::scoped_lock{this->mutex};
-    const auto iter = this->swapchain_monitors.emplace(swapchain, this->device);
+    const auto iter = this->swapchain_monitors.try_emplace(
+        swapchain, this->device, this->framegen_pacer);
     iter.first->second.update_params(was_low_latency_requested,
                                      std::chrono::microseconds{0});
 }

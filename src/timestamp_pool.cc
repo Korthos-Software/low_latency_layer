@@ -250,6 +250,16 @@ bool TimestampPool::Handle::has_end() const {
     return this->has_time_impl(1).has_value();
 }
 
+std::optional<DeviceClock::time_point> TimestampPool::Handle::try_end() const {
+    const auto ticks = this->has_time_impl(1);
+    if (!ticks) {
+        return std::nullopt;
+    }
+    const auto& context = this->timestamp_pool.queue_context.device;
+    assert(context.clock);
+    return context.clock->ticks_to_time(*ticks);
+}
+
 TimestampPool::~TimestampPool() {}
 
 } // namespace low_latency

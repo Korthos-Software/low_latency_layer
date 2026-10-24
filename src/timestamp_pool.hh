@@ -149,6 +149,9 @@ class TimestampPool final {
         // Checks if the time is available - doesn't block.
         bool has_start() const;
         bool has_end() const;
+
+        // The end time if available - doesn't block.
+        std::optional<DeviceClock::time_point> try_end() const;
     };
 
   private:

@@ -3,6 +3,7 @@
 #define SWAPCHAIN_MONITOR_HH_
 
 #include "delay_controller.hh"
+#include "framegen_pacer.hh"
 #include "semaphore_signal.hh"
 #include "submission_span.hh"
 
@@ -25,10 +26,12 @@ class SwapchainMonitor final {
     struct PendingSignal final {
         SemaphoreSignal semaphore_signal;
         std::vector<std::unique_ptr<SubmissionSpan>> submission_spans{};
+        DeviceClock::time_point sleep_called{};
     };
     std::deque<PendingSignal> pending_signals{};
 
     const DeviceContext& device;
+    FramegenPacer& framegen_pacer;
 
     DelayController delay_controller;
 
@@ -42,7 +45,8 @@ class SwapchainMonitor final {
     void do_monitor(const std::stop_token stoken);
 
   public:
-    explicit SwapchainMonitor(const DeviceContext& device);
+    explicit SwapchainMonitor(const DeviceContext& device,
+                              FramegenPacer& framegen_pacer);
     SwapchainMonitor(const SwapchainMonitor&) = delete;
     SwapchainMonitor(SwapchainMonitor&&) = delete;
     SwapchainMonitor& operator=(const SwapchainMonitor&) = delete;
